@@ -1,0 +1,16 @@
+{
+  "name": "bookou-lead-scraper",
+  "version": "1.0.0",
+  "description": "Serviço de prospecção de leads para barbearias",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "exceljs": "^4.4.0"
+  }
+}
