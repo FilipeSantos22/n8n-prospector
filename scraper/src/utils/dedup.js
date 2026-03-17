@@ -3,12 +3,17 @@
  * Usa place_id + nome normalizado + distância geográfica
  */
 
+// Palavras genéricas removidas na normalização (independente de segmento)
+const GENERIC_WORDS = /studio|salao|salão|shop|center|centro|espaco|espaço/gi;
+
 /**
  * Deduplica leads usando múltiplos critérios
  * @param {Array} leads - Array de leads (podem vir de múltiplas fontes)
+ * @param {Object} config - Config do segmento (opcional, melhora normalização)
  * @returns {Array} Leads únicos
  */
-function deduplicateLeads(leads) {
+function deduplicateLeads(leads, config = null) {
+  const segmentWords = buildSegmentRegex(config);
   const unique = new Map(); // place_id → lead
   const nameIndex = [];     // para comparação por nome+distância
 
@@ -24,7 +29,7 @@ function deduplicateLeads(leads) {
     }
 
     // 2. Dedup por nome normalizado + proximidade geográfica
-    const nameKey = normalizeName(lead.nome);
+    const nameKey = normalizeName(lead.nome, segmentWords);
     let isDuplicate = false;
 
     for (const entry of nameIndex) {
@@ -46,6 +51,12 @@ function deduplicateLeads(leads) {
           // Sem coordenadas — comparar endereço
           const addrSim = addressSimilarity(lead.endereco, entry.lead.endereco);
           if (addrSim > 0.7) {
+            // Merge
+            const mergedKey = entry.lead.place_id || entry.nameKey;
+            const existing = unique.get(mergedKey);
+            if (existing) {
+              unique.set(mergedKey, mergeLead(existing, lead));
+            }
             isDuplicate = true;
             break;
           }
@@ -79,19 +90,65 @@ function mergeLead(existing, newLead) {
     totalAvaliacoes: Math.max(existing.totalAvaliacoes || 0, newLead.totalAvaliacoes || 0),
     telefone: existing.telefone || newLead.telefone,
     website: existing.website || newLead.website,
+    email: existing.email || newLead.email,
+    cnpj: existing.cnpj || newLead.cnpj,
+    instagram: existing.instagram?.found ? existing.instagram : (newLead.instagram || existing.instagram),
     // Manter fontes
     sources: [...new Set([...(existing.sources || [existing.source]), newLead.source])],
   };
 }
 
 /**
+ * Constrói regex para remover palavras do segmento na normalização
+ */
+function buildSegmentRegex(config) {
+  if (!config) {
+    // Fallback: palavras mais comuns de todos os segmentos
+    return /barbearia|barber|clinica|clínica|estetica|estética|pet\s?shop|salao|salão|studio/gi;
+  }
+
+  const words = new Set();
+  const singular = config.qualificacao?.segmentoSingular || '';
+  const plural = config.qualificacao?.segmentoPlural || '';
+
+  // Adicionar singular e plural
+  if (singular) words.add(escapeRegex(singular));
+  if (plural) {
+    words.add(escapeRegex(plural));
+    // Também adicionar cada palavra do plural separadamente
+    for (const w of plural.split(/\s+/)) {
+      if (w.length > 2) words.add(escapeRegex(w));
+    }
+  }
+
+  // Adicionar keywords de busca que são nomes de segmento
+  for (const q of (config.busca?.queries || [])) {
+    const qWords = q.split(/\s+/);
+    for (const w of qWords) {
+      if (w.length > 3) words.add(escapeRegex(w));
+    }
+  }
+
+  if (words.size === 0) return GENERIC_WORDS;
+
+  const pattern = [...words].join('|');
+  return new RegExp(pattern, 'gi');
+}
+
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Normaliza nome para comparação
  */
-function normalizeName(name) {
+function normalizeName(name, segmentWords = null) {
+  const regex = segmentWords || /barbearia|barber\s?shop|studio|salao|salão|barber|clinica|clínica|estetica|estética/gi;
   return (name || '')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
-    .replace(/barbearia|barber\s?shop|studio|salao|salão|barber/gi, '')
+    .replace(regex, '')
+    .replace(GENERIC_WORDS, '')
     .replace(/[^a-z0-9]/g, '')
     .trim();
 }

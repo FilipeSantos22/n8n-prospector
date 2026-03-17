@@ -36,6 +36,12 @@ services:
       - EVOLUTION_API_URL=http://evolution:8080
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-bookou-evolution-key}
       - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-bookou}
+      - SEGMENT_ID=${SEGMENT_ID:-barbearias}
+      - ENRICH_CONCURRENCY=${ENRICH_CONCURRENCY:-3}
+      - CACHE_BACKEND=${CACHE_BACKEND:-memory}
+      - CACHE_DIR=/home/node/exports/.cache
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-file}
+      - EXPORTS_DIR=/home/node/exports
     volumes:
       - ./exports:/home/node/exports
     depends_on:

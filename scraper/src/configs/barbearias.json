@@ -1,0 +1,95 @@
+{
+  "id": "barbearias",
+  "nome": "Barbearias",
+  "produto": {
+    "nome": "Bookou",
+    "descricao": "agendamento, financeiro, comissoes, lembretes WhatsApp",
+    "planos": [
+      { "nome": "Start", "preco": "R$79,90/mes" },
+      { "nome": "Profissional", "preco": "R$149,90/mes" }
+    ],
+    "trial": "14 dias gratis"
+  },
+  "busca": {
+    "queries": ["barbearia", "barber shop", "barbearia masculina", "studio barber", "barbeiro", "salao masculino"],
+    "nearbyKeywords": ["barbearia", "barber"],
+    "googlePlaceType": "hair_care",
+    "foursquareCategory": "11057",
+    "foursquareQuery": "barbearia",
+    "cnaes": ["9602501"],
+    "instagramHashtags": ["barbearia", "barber", "barbershop", "barbeiro", "fadebrasileiro"],
+    "instagramBioKeywords": ["barb", "corte", "cabelo", "beard", "fade", "degradê", "agend", "hair", "navalha", "barbearia"],
+    "instagramHandlePrefixes": ["barbearia", "barber", "studio.barber", "barbearia_"]
+  },
+  "analise": {
+    "painKeywords": {
+      "fila": "\\b(fila|espera|esper[eiao]|demorou|demora|atras[oa]d?[oa]?|aguard)\\b",
+      "agendamento": "\\b(agenda[r]?|agend|marca[rç]|marcação|horário|ligar para|sem hora|por ordem)\\b",
+      "organizacao": "\\b(desorganizad|bagunça|confus|perdid|caótic|perdeu)\\b",
+      "atendimento_ruim": "\\b(mal atendid|grosso|grosseria|falta de educação|desrespeit)\\b",
+      "lotado": "\\b(lotad|chei[oa]|muita gente|muito mov|superlotad)\\b"
+    },
+    "positiveKeywords": "\\b(agend.*fácil|fácil.*agend|app.*ótimo|sistema.*bom|agenda.*online|marc.*online|pratic|sem espera)\\b",
+    "schedulingPainKeys": ["fila", "agendamento", "lotado"],
+    "competitors": {
+      "booksy": "booksy\\.com|booksy\\b",
+      "trinks": "trinks\\.com|trinks\\b",
+      "simpleag": "simpleag",
+      "setmore": "setmore\\.com|setmore\\b",
+      "calendly": "calendly\\.com|calendly\\b",
+      "agendor": "agendor\\.com|agendor\\b",
+      "goldie": "goldie\\.io|goldie\\b",
+      "fresha": "fresha\\.com|fresha\\b",
+      "mindbody": "mindbody\\.com|mindbody\\b",
+      "vagaro": "vagaro\\.com|vagaro\\b",
+      "square": "squareup.*appointment|square.*appointment",
+      "avec": "avec\\.digital|avec\\b",
+      "barzelink": "barzelink",
+      "barberapp": "barberapp",
+      "grazy": "grazy\\.app",
+      "beautydock": "beautydock",
+      "glamapp": "glamapp",
+      "zenoti": "zenoti"
+    }
+  },
+  "qualificacao": {
+    "promptContexto": "Consultor B2B SaaS barbearias. Produto: Bookou (agendamento, financeiro, comissoes, lembretes WhatsApp). Start R$79,90/mes, Profissional R$149,90/mes.",
+    "doresTemplates": {
+      "sem_site": "Sem presença digital — clientes não conseguem agendar online",
+      "sem_agendamento": "Tem site mas sem agendamento online — perde clientes que querem praticidade",
+      "reclama_fila": "Clientes reclamam de fila e espera nas avaliações do Google",
+      "alto_volume": "Alto volume de clientes — gestão manual de agenda é insustentável",
+      "muitos_dias": "Abre 6+ dias por semana — precisa otimizar agenda e comissões",
+      "usa_concorrente": "Usa {concorrentes} — pode estar insatisfeito com custo ou funcionalidades",
+      "marketing_abandonado": "Marketing digital abandonado — precisa de ferramentas que simplifiquem a gestão",
+      "desorganizacao": "Reviews mencionam desorganização — sistema de gestão resolveria",
+      "default": ["Gestão manual de agenda", "Sem relatórios financeiros automatizados"]
+    },
+    "mensagensTemplates": {
+      "fila": "Oi! Vi nas avaliações da {nome} que o movimento é forte! 💈 Sou da {produto} — com nosso agendamento online, seus clientes marcam pelo celular e acabam as filas. Posso te mostrar em 5 min?",
+      "sem_site": "Oi! Vi a {nome} no Google e curti o trabalho! 💈 Criei uma plataforma de agendamento online pra {segmento} — seus clientes agendam pelo celular, sem precisar ligar. Posso te mostrar rapidinho?",
+      "concorrente": "Oi! Conheço a {nome} e sei que já usam sistema de agendamento. 💈 Sou da {produto} — além de agenda, temos financeiro, comissões e lembretes WhatsApp automáticos. Queria te mostrar, topa?",
+      "alto_volume": "Oi! A {nome} é referência no Google com {avaliacoes} avaliações! 💈 Sou da {produto}, plataforma de gestão pra {segmento} (agenda + financeiro + comissões). Queria te mostrar como pode ajudar, topa?",
+      "default": "Oi! Conheci a {nome} e achei o trabalho incrível! 💈 Sou da {produto} — plataforma de gestão pra {segmento} com agendamento online, financeiro e lembretes automáticos. Posso te mostrar em 5 min?",
+      "instagram": "Oi! Curti muito o trabalho da {nomeSimples}! 🔥 Criei uma plataforma de agendamento online pra {segmento}, posso te mostrar?",
+      "followup": "Oi de novo! 😊 Só passando pra ver se viu minha mensagem. Temos {trial} pra testar, sem compromisso!"
+    },
+    "argumentos": {
+      "fila": "Agendamento online elimina filas — seus clientes agendam pelo celular",
+      "sem_site": "Página de agendamento online pronta — seus clientes agendam sem ligar",
+      "concorrente": "{produto} é mais completo (agenda + financeiro + comissões) e com suporte brasileiro",
+      "alto_volume": "Gestão completa: agenda, financeiro, comissões e lembretes automáticos",
+      "default": "Agendamento online + gestão financeira em um só lugar"
+    },
+    "perfilLabels": {
+      "grande": "{segmentoSingular} grande e estabelecid{genero}",
+      "popular": "{segmentoSingular} popular",
+      "crescimento": "{segmentoSingular} em crescimento",
+      "bairro": "{segmentoSingular} de bairro",
+      "pequeno": "{segmentoSingular} pequen{genero}/nov{genero}"
+    },
+    "segmentoSingular": "Barbearia",
+    "segmentoPlural": "barbearias",
+    "genero": "a"
+  }
+}

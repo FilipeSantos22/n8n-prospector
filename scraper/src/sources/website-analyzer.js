@@ -1,8 +1,8 @@
 const axios = require('axios');
 const { extractWhatsAppLinks } = require('../utils/phone');
 
-// Concorrentes de agendamento — incluindo brasileiros
-const COMPETITORS = {
+// Fallback hardcoded (usado se nenhum config for passado)
+const DEFAULT_COMPETITORS = {
   booksy: /booksy\.com|booksy\b/i,
   trinks: /trinks\.com|trinks\b/i,
   simpleag: /simpleag/i,
@@ -24,11 +24,13 @@ const COMPETITORS = {
 };
 
 /**
- * Analisa o website de uma barbearia
+ * Analisa o website de um estabelecimento
  * Detecta: concorrentes, contatos, redes sociais, maturidade digital
  */
-async function analyzeWebsite(url) {
+async function analyzeWebsite(url, config = null) {
   if (!url) return { analyzed: false, reason: 'sem_website' };
+
+  const competitors = config ? config.analise.competitors : DEFAULT_COMPETITORS;
 
   try {
     const { data: html, status } = await axios.get(url, {
@@ -47,7 +49,7 @@ async function analyzeWebsite(url) {
 
     // 1. Detectar concorrentes
     const competitorsFound = [];
-    for (const [name, regex] of Object.entries(COMPETITORS)) {
+    for (const [name, regex] of Object.entries(competitors)) {
       if (regex.test(html)) {
         competitorsFound.push(name);
       }

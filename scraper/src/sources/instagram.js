@@ -5,22 +5,22 @@ const axios = require('axios');
  * 1. Handle direto (do site/Google Maps)
  * 2. Geração de handles possíveis pelo nome
  */
-async function checkInstagram(nameOrHandle, knownHandle = null) {
+async function checkInstagram(nameOrHandle, knownHandle = null, config = null) {
   // Se já temos o handle (do site ou Google), tentar primeiro
   if (knownHandle) {
     const clean = knownHandle.replace(/^@/, '').replace(/\/$/, '');
-    const result = await fetchInstagramProfile(clean);
+    const result = await fetchInstagramProfile(clean, config);
     if (result) {
       return { ...result, handle: clean, found: true, source: 'known_handle' };
     }
   }
 
   // Gerar possíveis handles a partir do nome
-  const handles = generateHandles(nameOrHandle);
+  const handles = generateHandles(nameOrHandle, config);
 
   for (const handle of handles) {
     try {
-      const result = await fetchInstagramProfile(handle);
+      const result = await fetchInstagramProfile(handle, config);
       if (result) {
         return { ...result, handle, found: true, source: 'generated_handle' };
       }
@@ -35,9 +35,9 @@ async function checkInstagram(nameOrHandle, knownHandle = null) {
 }
 
 /**
- * Gera possíveis usernames do Instagram baseado no nome da barbearia
+ * Gera possíveis usernames do Instagram baseado no nome do estabelecimento
  */
-function generateHandles(nome) {
+function generateHandles(nome, config = null) {
   const clean = nome
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -47,32 +47,37 @@ function generateHandles(nome) {
   const words = clean.split(/\s+/);
   const handles = new Set();
 
-  // Combinações comuns
+  // Combinações genéricas (funciona para qualquer segmento)
   handles.add(clean.replace(/\s+/g, ''));
   handles.add(clean.replace(/\s+/g, '_'));
   handles.add(clean.replace(/\s+/g, '.'));
   handles.add(words.join(''));
   handles.add(words.join('_'));
 
-  // Sem "barbearia" no início
-  if (words[0] === 'barbearia' && words.length > 1) {
+  // Palavras do segmento para manipular no nome
+  const segmentWords = getSegmentWords(config);
+  const firstWord = words[0];
+  const isSegmentPrefix = segmentWords.some(sw => firstWord === sw || firstWord.startsWith(sw));
+
+  if (isSegmentPrefix && words.length > 1) {
     const rest = words.slice(1);
-    handles.add('barb' + rest.join(''));
-    handles.add('barbearia' + rest.join(''));
-    handles.add('barbearia_' + rest.join('_'));
+    handles.add(firstWord + rest.join(''));
+    handles.add(firstWord + '_' + rest.join('_'));
     handles.add(rest.join(''));
     handles.add(rest.join('_'));
     handles.add(rest.join('.'));
   }
 
-  // Com prefixos comuns
-  if (!clean.startsWith('barbearia')) {
-    handles.add('barbearia' + clean.replace(/\s+/g, ''));
-    handles.add('barbearia_' + clean.replace(/\s+/g, '_'));
-    handles.add('barber' + clean.replace(/\s+/g, ''));
+  // Com prefixos do segmento
+  const prefixes = config?.busca?.instagramHandlePrefixes || ['barbearia', 'barber'];
+  if (!isSegmentPrefix) {
+    for (const prefix of prefixes.slice(0, 2)) {
+      handles.add(prefix + clean.replace(/\s+/g, ''));
+      handles.add(prefix + '_' + clean.replace(/\s+/g, '_'));
+    }
   }
 
-  // Com sufixos de cidade comuns
+  // Com sufixos comuns
   const mainWord = words.length > 1 ? words.slice(1).join('') : words[0];
   handles.add(mainWord + 'oficial');
   handles.add(mainWord + '_oficial');
@@ -83,7 +88,7 @@ function generateHandles(nome) {
 /**
  * Tenta acessar perfil público do Instagram via web
  */
-async function fetchInstagramProfile(handle) {
+async function fetchInstagramProfile(handle, config = null) {
   try {
     const { data, status } = await axios.get(`https://www.instagram.com/${handle}/`, {
       headers: {
@@ -106,16 +111,18 @@ async function fetchInstagramProfile(handle) {
     const externalUrlMatch = data.match(/"external_url":"([^"]*?)"/);
     const isBusinessMatch = data.match(/"is_business_account":(true|false)/);
 
-    // Verificar se é realmente uma barbearia
+    // Verificar se é realmente do segmento (usando keywords do config)
     const bio = bioMatch ? decodeUnicode(bioMatch[1]) : '';
-    const barbeariaKeywords = ['barb', 'corte', 'cabelo', 'beard', 'fade', 'degradê', 'agend', 'hair', 'navalha'];
-    const isBarbearia = barbeariaKeywords.some(k => bio.toLowerCase().includes(k));
+    const bioKeywords = config?.busca?.instagramBioKeywords || [
+      'barb', 'corte', 'cabelo', 'beard', 'fade', 'degradê', 'agend', 'hair', 'navalha',
+    ];
+    const isSegment = bioKeywords.some(k => bio.toLowerCase().includes(k));
 
-    if (!isBarbearia && !isBusinessMatch) return null;
+    if (!isSegment && !isBusinessMatch) return null;
 
     const externalUrl = externalUrlMatch ? decodeUnicode(externalUrlMatch[1]) : '';
     const temWhatsappLink = externalUrl.includes('wa.me') || externalUrl.includes('whatsapp') || bio.includes('whatsapp');
-    const temAgendamentoOnline = /booksy|trinks|calendly|linktree|linktr\.ee|agende|agendamento|avec/i.test(externalUrl + ' ' + bio);
+    const temAgendamentoOnline = /booksy|trinks|calendly|linktree|linktr\.ee|agende|agendamento|avec|fresha/i.test(externalUrl + ' ' + bio);
 
     return {
       nome: nameMatch ? decodeUnicode(nameMatch[1]) : handle,
@@ -131,6 +138,21 @@ async function fetchInstagramProfile(handle) {
   } catch (err) {
     return null;
   }
+}
+
+/**
+ * Retorna palavras do segmento normalizadas (sem acento, lowercase)
+ */
+function getSegmentWords(config) {
+  if (!config) return ['barbearia', 'barber', 'studio'];
+  const singular = (config.qualificacao?.segmentoSingular || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const plural = (config.qualificacao?.segmentoPlural || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  // Extrair palavras individuais
+  const words = new Set([singular, plural, 'studio']);
+  for (const w of plural.split(/\s+/)) { if (w.length > 2) words.add(w); }
+  return [...words].filter(Boolean);
 }
 
 function decodeUnicode(str) {

@@ -1,33 +1,39 @@
 const axios = require('axios');
 
 /**
- * Busca barbearias no Foursquare Places API (v3)
- * API Key gratuita: https://location.foursquare.com/developer/
+ * Busca no Foursquare Places API (v3)
  * Free tier: 200 req/dia
  */
-async function searchFoursquare(city, state, apiKey) {
+async function searchFoursquare(city, state, apiKey, config = null) {
   if (!apiKey) {
     console.log('[Foursquare] API key não configurada, pulando...');
     return [];
   }
 
+  const fsqQuery = config?.busca?.foursquareQuery || 'barbearia';
+  const fsqCategory = config?.busca?.foursquareCategory || '';
+
   const allResults = [];
-  const query = `barbearia ${city}`;
+  const query = `${fsqQuery} ${city}`;
 
   console.log(`[Foursquare] Buscando: "${query}"`);
 
   try {
+    const params = {
+      query: fsqQuery,
+      near: `${city}, ${state}, Brazil`,
+      limit: 50,
+    };
+    if (fsqCategory) {
+      params.categories = fsqCategory;
+    }
+
     const { data } = await axios.get('https://api.foursquare.com/v3/places/search', {
       headers: {
         'Authorization': apiKey,
         'Accept': 'application/json',
       },
-      params: {
-        query: 'barbearia',
-        near: `${city}, ${state}, Brazil`,
-        limit: 50,
-        categories: '11057', // Barber Shop category
-      }
+      params,
     });
 
     for (const place of (data.results || [])) {

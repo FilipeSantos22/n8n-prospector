@@ -5,12 +5,18 @@ const path = require('path');
 const fs = require('fs');
 const ExcelJS = require('exceljs');
 
+// Config
+const { getConfig, listSegments } = require('./config-loader');
+
 // Sources
 const { searchGoogleMaps, nearbySearchGrid, combinedSearch, getPlaceDetails } = require('./sources/google-maps');
 const { sendWhatsApp, getWhatsAppStatus, connectWhatsApp } = require('./sources/whatsapp');
 const { searchFoursquare } = require('./sources/foursquare');
 const { checkInstagram } = require('./sources/instagram');
 const { analyzeWebsite } = require('./sources/website-analyzer');
+const { searchGoogleCustom } = require('./sources/google-search');
+const { searchByCNAE, enrichCNPJ } = require('./sources/cnpj-receita');
+const { searchInstagram } = require('./sources/instagram-search');
 
 // Analysis
 const { analyzeReviews } = require('./analysis/reviews');
@@ -24,25 +30,41 @@ const { deduplicateLeads } = require('./utils/dedup');
 // Qualifier
 const { qualifyWithAI } = require('./ai-qualifier');
 
+// Infrastructure
+const { getStorage } = require('./storage');
+const { getCache } = require('./cache');
+const { getSeenRegistry } = require('./discovery/seen-registry');
+const { pMap } = require('./utils/concurrency');
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT = process.env.PORT || 3099;
-const LEADS_FILE = '/home/node/exports/leads-data.json';
-const EXPORTS_DIR = '/home/node/exports';
+const EXPORTS_DIR = process.env.EXPORTS_DIR || '/home/node/exports';
+const ENRICH_CONCURRENCY = parseInt(process.env.ENRICH_CONCURRENCY || '3');
+
+// ════════════════════════════════════════════════════
+// SEGMENTOS — Listar configs disponíveis
+// ════════════════════════════════════════════════════
+app.get('/api/segments', (req, res) => {
+  try {
+    const segments = listSegments();
+    res.json({ segments });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ════════════════════════════════════════════════════
 // PAINEL WEB — Dados dos leads
 // ════════════════════════════════════════════════════
 app.get('/api/leads', (req, res) => {
   try {
-    if (fs.existsSync(LEADS_FILE)) {
-      const data = JSON.parse(fs.readFileSync(LEADS_FILE, 'utf-8'));
-      return res.json(data);
-    }
-    res.json({ leads: [], resumo: {}, meta: {} });
+    const tenantId = req.query.tenantId || 'default';
+    const data = getStorage().getLatestLeads(tenantId);
+    res.json(data);
   } catch (err) {
     res.json({ leads: [], resumo: {}, meta: {}, error: err.message });
   }
@@ -136,15 +158,22 @@ app.get('/api/import-excel', async (req, res) => {
 // HEALTH CHECK
 // ════════════════════════════════════════════════════
 app.get('/health', (req, res) => {
+  const config = getConfig();
+  const cache = getCache();
+  const seenRegistry = getSeenRegistry();
   res.json({
     status: 'ok',
-    version: '2.0.0',
+    version: '2.1.0',
+    segment: config.id,
     apis: {
       google_maps: !!process.env.GOOGLE_MAPS_API_KEY,
       foursquare: !!process.env.FOURSQUARE_API_KEY,
       google_search: !!process.env.GOOGLE_SEARCH_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
-    }
+    },
+    cache: cache.stats(),
+    seen: seenRegistry.stats(),
+    enrichConcurrency: ENRICH_CONCURRENCY,
   });
 });
 
@@ -155,11 +184,13 @@ app.get('/health', (req, res) => {
 // ── FASE 1: DISCOVERY (grid geográfico + text search) ──
 app.post('/api/v2/discover', async (req, res) => {
   try {
-    const { cities } = req.body;
+    const { cities, segmentId, newOnly = false, tenantId = 'default' } = req.body;
     if (!cities || !Array.isArray(cities)) {
       return res.status(400).json({ error: 'cities é obrigatório (array de {city, state})' });
     }
 
+    const config = getConfig(segmentId);
+    const seenRegistry = getSeenRegistry();
     const googleKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!googleKey) {
       return res.status(400).json({ error: 'GOOGLE_MAPS_API_KEY não configurada' });
@@ -169,7 +200,7 @@ app.post('/api/v2/discover', async (req, res) => {
 
     for (const { city, state, radiusKm } of cities) {
       console.log(`\n${'═'.repeat(60)}`);
-      console.log(`DISCOVERY: ${city}/${state}`);
+      console.log(`DISCOVERY: ${city}/${state} [${config.nome}]`);
       console.log('═'.repeat(60));
 
       // Gerar grid
@@ -181,30 +212,62 @@ app.post('/api/v2/discover', async (req, res) => {
         const geo = await geocodeCity(city, state, googleKey);
         if (geo) {
           grid = generateGrid(city, state, radiusKm || 3);
-          // Se ainda não tem, usar o geocoding result
           if (grid.needsGeocoding) {
             grid.points = [geo.center];
-            grid.radiusMeters = 10000; // 10km de raio
+            grid.radiusMeters = 10000;
           }
         }
       }
 
       // Busca combinada: Nearby (grid) + Text Search
-      const results = await combinedSearch(city, state, grid.points, grid.radiusMeters, googleKey);
+      const results = await combinedSearch(city, state, grid.points, grid.radiusMeters, googleKey, config);
 
       // Foursquare (se configurado)
       const fsqKey = process.env.FOURSQUARE_API_KEY;
-      const fsqResults = await searchFoursquare(city, state, fsqKey);
+      const fsqResults = await searchFoursquare(city, state, fsqKey, config);
+
+      // Google Custom Search (se configurado)
+      const gcsResults = await searchGoogleCustom(city, state, config);
+
+      // CNAE / Receita Federal (se CNAEs configurados)
+      const cnaeResults = await searchByCNAE(city, state, config);
+
+      // Instagram Search (scraping de hashtags)
+      const igResults = await searchInstagram(city, state, config);
 
       // Merge de todas as fontes e dedup
-      const allForCity = [...results, ...fsqResults.map(l => ({ ...l, rating: 0, totalAvaliacoes: 0 }))];
-      const deduped = deduplicateLeads(allForCity);
+      const allForCity = [
+        ...results,
+        ...fsqResults.map(l => ({ ...l, rating: 0, totalAvaliacoes: 0 })),
+        ...gcsResults,
+        ...cnaeResults,
+        ...igResults,
+      ];
+      const deduped = deduplicateLeads(allForCity, config);
 
-      console.log(`[Discovery] ${city}/${state}: ${deduped.length} leads únicos`);
+      const sourceCounts = {
+        google_maps: results.length,
+        foursquare: fsqResults.length,
+        google_search: gcsResults.length,
+        receita_federal: cnaeResults.length,
+        instagram: igResults.length,
+      };
+      console.log(`[Discovery] ${city}/${state}: ${deduped.length} leads únicos`, sourceCounts);
       allLeads.push(...deduped.map(l => ({ ...l, cidade: city, estado: state })));
     }
 
-    res.json({ total: allLeads.length, leads: allLeads });
+    // Filtrar leads já conhecidos (incremental discovery)
+    let finalLeads = allLeads;
+    let skippedKnown = 0;
+    if (newOnly) {
+      finalLeads = seenRegistry.filterNew(allLeads, tenantId);
+      skippedKnown = allLeads.length - finalLeads.length;
+      if (skippedKnown > 0) {
+        console.log(`[Discovery] Incremental: ${skippedKnown} leads já conhecidos removidos, ${finalLeads.length} novos`);
+      }
+    }
+
+    res.json({ total: finalLeads.length, leads: finalLeads, skippedKnown });
   } catch (err) {
     console.error('[Discovery] Erro:', err);
     res.status(500).json({ error: err.message });
@@ -221,11 +284,10 @@ app.post('/api/v2/prefilter', async (req, res) => {
 
     const before = leads.length;
     const filtered = leads.filter(lead => {
-      // Descarta fechados permanentemente
       if (lead.businessStatus === 'CLOSED_PERMANENTLY') return false;
-      // Mínimo de reviews
-      if (lead.totalAvaliacoes < minReviews) return false;
-      // Rating mínimo (se tem rating)
+      // Leads da Receita Federal e Instagram não têm avaliações — não filtrar por reviews
+      const fromAltSource = ['receita_federal', 'google_search', 'instagram_search'].includes(lead.source);
+      if (!fromAltSource && lead.totalAvaliacoes < minReviews) return false;
       if (lead.rating > 0 && lead.rating < minRating) return false;
       return true;
     });
@@ -241,24 +303,35 @@ app.post('/api/v2/prefilter', async (req, res) => {
 // ── FASE 3: ENRICHMENT ──
 app.post('/api/v2/enrich', async (req, res) => {
   try {
-    const { leads } = req.body;
+    const { leads, segmentId, concurrency, tenantId = 'default' } = req.body;
     if (!leads || !Array.isArray(leads)) {
       return res.status(400).json({ error: 'leads é obrigatório (array)' });
     }
 
+    const config = getConfig(segmentId);
     const googleKey = process.env.GOOGLE_MAPS_API_KEY;
-    const enriched = [];
-    let processed = 0;
+    const cache = getCache();
+    const storage = getStorage();
+    const enrichConcurrency = concurrency || ENRICH_CONCURRENCY;
+    let completed = 0;
 
-    for (const lead of leads) {
-      processed++;
-      console.log(`[Enrich] ${processed}/${leads.length}: ${lead.nome}`);
+    async function enrichOne(lead) {
+      completed++;
+      console.log(`[Enrich] ${completed}/${leads.length}: ${lead.nome}`);
 
       let enrichedLead = { ...lead };
 
-      // 1. Google Place Details
+      // 1. Google Place Details (com cache)
       if (lead.place_id && googleKey) {
-        const details = await getPlaceDetails(lead.place_id, googleKey);
+        let details = cache.get('place-details', lead.place_id);
+        if (!details) {
+          details = await getPlaceDetails(lead.place_id, googleKey);
+          if (details) cache.set('place-details', lead.place_id, details);
+          await sleep(200);
+        } else {
+          console.log(`  [Cache] Place Details hit: ${lead.place_id}`);
+        }
+
         if (details) {
           enrichedLead = {
             ...enrichedLead,
@@ -271,41 +344,46 @@ app.post('/api/v2/enrich', async (req, res) => {
             reviews: details.reviews,
           };
 
-          // Extrair WhatsApp
           enrichedLead.whatsapp = extractWhatsApp({
             phone: details.telefone,
             phoneInternational: details.telefoneInternacional,
           });
         }
-        await sleep(200);
       }
 
-      // 2. Análise do website
+      // 2. Análise do website (com cache)
       if (enrichedLead.website) {
-        console.log(`  [Website] Analisando ${enrichedLead.website}`);
-        enrichedLead.websiteAnalysis = await analyzeWebsite(enrichedLead.website);
+        let wsAnalysis = cache.get('website-analysis', enrichedLead.website);
+        if (!wsAnalysis) {
+          console.log(`  [Website] Analisando ${enrichedLead.website}`);
+          wsAnalysis = await analyzeWebsite(enrichedLead.website, config);
+          if (wsAnalysis.analyzed) cache.set('website-analysis', enrichedLead.website, wsAnalysis);
+        } else {
+          console.log(`  [Cache] Website hit: ${enrichedLead.website}`);
+        }
+        enrichedLead.websiteAnalysis = wsAnalysis;
 
-        // Extrair contatos extras do site
-        if (enrichedLead.websiteAnalysis.whatsappLinks?.length > 0 && !enrichedLead.whatsapp) {
-          enrichedLead.whatsapp = enrichedLead.websiteAnalysis.whatsappLinks[0];
+        if (wsAnalysis.whatsappLinks?.length > 0 && !enrichedLead.whatsapp) {
+          enrichedLead.whatsapp = wsAnalysis.whatsappLinks[0];
         }
-        if (enrichedLead.websiteAnalysis.emails?.length > 0) {
-          enrichedLead.email = enrichedLead.websiteAnalysis.emails[0];
+        if (wsAnalysis.emails?.length > 0) {
+          enrichedLead.email = enrichedLead.email || wsAnalysis.emails[0];
         }
-        if (enrichedLead.websiteAnalysis.socialMedia?.instagram) {
-          enrichedLead.instagramHandle = enrichedLead.websiteAnalysis.socialMedia.instagram;
-        }
-
-        // WhatsApp do site
-        if (!enrichedLead.whatsapp && enrichedLead.websiteAnalysis.whatsappLinks?.length > 0) {
-          enrichedLead.whatsapp = enrichedLead.websiteAnalysis.whatsappLinks[0];
+        if (wsAnalysis.socialMedia?.instagram) {
+          enrichedLead.instagramHandle = enrichedLead.instagramHandle || wsAnalysis.socialMedia.instagram;
         }
       }
 
-      // 3. Instagram (só se já temos o handle do site — evita scraping lento)
+      // 3. Instagram (com cache)
       if (enrichedLead.instagramHandle) {
-        console.log(`  [Instagram] Verificando @${enrichedLead.instagramHandle}...`);
-        const igResult = await checkInstagram(enrichedLead.nome, enrichedLead.instagramHandle);
+        let igResult = cache.get('instagram-profile', enrichedLead.instagramHandle);
+        if (!igResult) {
+          console.log(`  [Instagram] Verificando @${enrichedLead.instagramHandle}...`);
+          igResult = await checkInstagram(enrichedLead.nome, enrichedLead.instagramHandle, config);
+          if (igResult.found) cache.set('instagram-profile', enrichedLead.instagramHandle, igResult);
+        } else {
+          console.log(`  [Cache] Instagram hit: @${enrichedLead.instagramHandle}`);
+        }
         enrichedLead.instagram = igResult;
 
         if (igResult.found && !enrichedLead.whatsapp) {
@@ -315,26 +393,50 @@ app.post('/api/v2/enrich', async (req, res) => {
           });
           if (waFromIg) enrichedLead.whatsapp = waFromIg;
         }
-      } else {
+      } else if (!enrichedLead.instagram?.found) {
         enrichedLead.instagram = { found: false, handle: null };
       }
 
-      enriched.push(enrichedLead);
+      // 4. CNPJ enrichment (com cache)
+      if (enrichedLead.cnpj && enrichedLead.source === 'receita_federal') {
+        let cnpjData = cache.get('cnpj', enrichedLead.cnpj);
+        if (!cnpjData) {
+          console.log(`  [CNPJ] Enriquecendo ${enrichedLead.cnpj}...`);
+          cnpjData = await enrichCNPJ(enrichedLead.cnpj);
+          if (cnpjData) cache.set('cnpj', enrichedLead.cnpj, cnpjData);
+          await sleep(1500); // BrasilAPI rate limit
+        } else {
+          console.log(`  [Cache] CNPJ hit: ${enrichedLead.cnpj}`);
+        }
 
-      // Salvar progresso a cada 50 leads
-      if (enriched.length % 50 === 0) {
-        const tmpFile = '/tmp/enriched-result.json';
-        fs.writeFileSync(tmpFile, JSON.stringify({ total: enriched.length, leads: enriched }));
-        console.log(`  [Backup] ${enriched.length} leads salvos em ${tmpFile}`);
+        if (cnpjData) {
+          enrichedLead.razao_social = cnpjData.razao_social;
+          enrichedLead.nome = enrichedLead.nome || cnpjData.nome_fantasia || cnpjData.razao_social;
+          enrichedLead.endereco = enrichedLead.endereco || `${cnpjData.logradouro}, ${cnpjData.numero} - ${cnpjData.bairro}`;
+          enrichedLead.telefone = enrichedLead.telefone || cnpjData.telefone;
+          enrichedLead.email = enrichedLead.email || cnpjData.email;
+          enrichedLead.porte = cnpjData.porte;
+          enrichedLead.abertura = cnpjData.abertura;
+
+          if (!enrichedLead.whatsapp && cnpjData.telefone) {
+            enrichedLead.whatsapp = extractWhatsApp({ phone: cnpjData.telefone });
+          }
+          if (!enrichedLead.whatsapp && cnpjData.telefone2) {
+            enrichedLead.whatsapp = extractWhatsApp({ phone: cnpjData.telefone2 });
+          }
+        }
       }
 
-      await sleep(300);
+      return enrichedLead;
     }
 
-    // Salvar resultado final
-    const tmpFile = '/tmp/enriched-result.json';
-    fs.writeFileSync(tmpFile, JSON.stringify({ total: enriched.length, leads: enriched }));
-    console.log(`[Enrich] Resultado salvo em ${tmpFile}`);
+    // Enriquecimento paralelo
+    console.log(`[Enrich] Processando ${leads.length} leads (concurrency: ${enrichConcurrency})...`);
+    const enriched = await pMap(leads, enrichOne, enrichConcurrency);
+
+    // Salvar progresso
+    storage.saveTempData('enriched-result', { total: enriched.length, leads: enriched }, tenantId);
+    console.log(`[Enrich] ${enriched.length} leads enriquecidos`);
 
     res.json({ total: enriched.length, leads: enriched });
   } catch (err) {
@@ -346,16 +448,15 @@ app.post('/api/v2/enrich', async (req, res) => {
 // ── FASE 4: DEEP ANALYSIS ──
 app.post('/api/v2/analyze', async (req, res) => {
   try {
-    const { leads } = req.body;
+    const { leads, segmentId } = req.body;
     if (!leads || !Array.isArray(leads)) {
       return res.status(400).json({ error: 'leads é obrigatório (array)' });
     }
 
-    const analyzed = leads.map(lead => {
-      // Análise de reviews
-      const reviewAnalysis = analyzeReviews(lead.reviews);
+    const config = getConfig(segmentId);
 
-      // Análise de marketing
+    const analyzed = leads.map(lead => {
+      const reviewAnalysis = analyzeReviews(lead.reviews, config);
       const marketingStatus = analyzeMarketingStatus(lead.instagram, lead.websiteAnalysis);
 
       return {
@@ -365,7 +466,6 @@ app.post('/api/v2/analyze', async (req, res) => {
       };
     });
 
-    // Estatísticas da análise
     const stats = {
       withSchedulingPain: analyzed.filter(l => l.reviewAnalysis?.hasSchedulingPain).length,
       withOrganizationIssues: analyzed.filter(l => l.reviewAnalysis?.hasOrganizationIssues).length,
@@ -385,11 +485,12 @@ app.post('/api/v2/analyze', async (req, res) => {
 // ── FASE 5: QUALIFY ──
 app.post('/api/v2/qualify', async (req, res) => {
   try {
-    const { leads } = req.body;
+    const { leads, segmentId } = req.body;
     if (!leads || !Array.isArray(leads)) {
       return res.status(400).json({ error: 'leads é obrigatório (array)' });
     }
 
+    const config = getConfig(segmentId);
     const qualified = [];
     let processed = 0;
 
@@ -397,12 +498,11 @@ app.post('/api/v2/qualify', async (req, res) => {
       processed++;
       console.log(`[Qualify] ${processed}/${leads.length}: ${lead.nome}`);
 
-      const qualification = await qualifyWithAI(lead);
+      const qualification = await qualifyWithAI(lead, config);
       qualified.push({ ...lead, qualification });
       await sleep(100);
     }
 
-    // Ordenar por score
     qualified.sort((a, b) => (b.qualification?.score || 0) - (a.qualification?.score || 0));
 
     const resumo = buildResumo(qualified);
@@ -419,18 +519,22 @@ app.post('/api/v2/qualify', async (req, res) => {
 // ════════════════════════════════════════════════════
 app.post('/api/v2/pipeline', async (req, res) => {
   try {
-    const { cities, minReviews = 5, minRating = 0, radiusKm = 5 } = req.body;
+    const { cities, minReviews = 5, minRating = 0, radiusKm = 5, segmentId, newOnly = false, tenantId = 'default' } = req.body;
+
+    const config = getConfig(segmentId);
+    const storage = getStorage();
 
     console.log('\n' + '█'.repeat(60));
-    console.log('█  BOOKOU LEAD PROSPECTOR v2 — PIPELINE');
+    console.log(`█  ${config.produto.nome.toUpperCase()} LEAD PROSPECTOR v2 — PIPELINE [${config.nome}]`);
+    if (newOnly) console.log('█  MODO: Incremental (somente leads novos)');
     console.log('█'.repeat(60));
 
     const citiesWithRadius = cities.map(c => ({ ...c, radiusKm }));
 
     // FASE 1: DISCOVERY
     console.log('\n🔍 FASE 1: Discovery (grid geográfico)...');
-    const discoverRes = await axios.post(`http://localhost:${PORT}/api/v2/discover`, { cities: citiesWithRadius }, { timeout: 600000 });
-    console.log(`✅ ${discoverRes.data.total} leads encontrados`);
+    const discoverRes = await axios.post(`http://localhost:${PORT}/api/v2/discover`, { cities: citiesWithRadius, segmentId: config.id, newOnly, tenantId }, { timeout: 600000 });
+    console.log(`✅ ${discoverRes.data.total} leads encontrados${discoverRes.data.skippedKnown ? ` (${discoverRes.data.skippedKnown} já conhecidos)` : ''}`);
 
     // FASE 2: PRE-FILTER
     console.log('\n🔽 FASE 2: Pre-filter...');
@@ -441,43 +545,45 @@ app.post('/api/v2/pipeline', async (req, res) => {
 
     // FASE 3: ENRICHMENT
     console.log('\n📊 FASE 3: Enrichment...');
-    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filterRes.data.leads }, { timeout: 600000 });
+    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filterRes.data.leads, segmentId: config.id, tenantId }, { timeout: 600000 });
     console.log(`✅ ${enrichRes.data.total} leads enriquecidos`);
 
     // FASE 4: DEEP ANALYSIS
     console.log('\n🧠 FASE 4: Deep Analysis...');
-    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads }, { timeout: 60000 });
+    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads, segmentId: config.id }, { timeout: 60000 });
     console.log(`✅ ${analyzeRes.data.total} leads analisados`);
 
     // FASE 5: QUALIFY
     console.log('\n🎯 FASE 5: Qualify...');
-    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads }, { timeout: 600000 });
+    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
+
+    // Marcar leads como vistos (para incremental discovery futuro)
+    const seenRegistry = getSeenRegistry();
+    const marked = seenRegistry.markSeen(qualifyRes.data.leads, tenantId);
+    console.log(`[SeenRegistry] ${marked} novos leads registrados`);
 
     // EXPORT EXCEL
     console.log('\n📄 Exportando Excel...');
-    const excelPath = await exportToExcel(qualifyRes.data.leads, cities);
+    const excelPath = await exportToExcel(qualifyRes.data.leads, cities, config);
     console.log(`✅ ${excelPath}`);
 
-    // SAVE JSON
+    // SAVE via storage
     console.log('\n💾 Salvando dashboard...');
-    const leadsData = {
-      leads: qualifyRes.data.leads,
-      resumo: qualifyRes.data.resumo,
-      meta: {
-        cities: cities.map(c => `${c.city}/${c.state}`).join(', '),
-        date: new Date().toISOString(),
-        total: qualifyRes.data.total,
-        version: 'v2',
-      },
+    const meta = {
+      cities: cities.map(c => `${c.city}/${c.state}`).join(', '),
+      date: new Date().toISOString(),
+      total: qualifyRes.data.total,
+      version: 'v2',
+      segment: config.id,
     };
-    if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
-    fs.writeFileSync(LEADS_FILE, JSON.stringify(leadsData, null, 2));
+    storage.saveLeads('latest', qualifyRes.data.leads, { ...meta, resumo: qualifyRes.data.resumo }, tenantId);
 
     // RESUMO
     const r = qualifyRes.data.resumo;
     console.log('\n' + '█'.repeat(60));
     console.log('█  PIPELINE v2 CONCLUÍDO');
+    console.log(`█  Segmento: ${config.nome}`);
     console.log(`█  Total: ${qualifyRes.data.total} leads`);
     console.log(`█  🔥 Quentes: ${r.quentes}`);
     console.log(`█  🟡 Mornos: ${r.mornos}`);
@@ -501,53 +607,58 @@ app.post('/api/v2/pipeline', async (req, res) => {
 // ════════════════════════════════════════════════════
 app.post('/api/v2/pipeline-from-file', async (req, res) => {
   try {
-    const { file = '/tmp/discover-result.json', minReviews = 5 } = req.body;
+    const { file = '/tmp/discover-result.json', minReviews = 5, segmentId, cities: inputCities } = req.body;
+
+    const config = getConfig(segmentId);
 
     console.log('\n' + '█'.repeat(60));
-    console.log('█  PIPELINE v2 — A PARTIR DE DISCOVERY SALVO');
+    console.log(`█  PIPELINE v2 — A PARTIR DE DISCOVERY SALVO [${config.nome}]`);
     console.log('█'.repeat(60));
 
-    // Ler discovery do arquivo
     if (!fs.existsSync(file)) {
       return res.status(404).json({ error: `Arquivo não encontrado: ${file}` });
     }
     const discoverData = JSON.parse(fs.readFileSync(file, 'utf-8'));
     console.log(`✅ Loaded ${discoverData.total} leads do arquivo`);
 
+    // Detectar cidades dos dados ou usar as fornecidas
+    const cities = inputCities || extractCities(discoverData.leads);
+
     // PRE-FILTER
     console.log('\n🔽 FASE 2: Pre-filter...');
     const filtered = discoverData.leads.filter(l => {
       if (l.businessStatus === 'CLOSED_PERMANENTLY') return false;
-      if (l.totalAvaliacoes < minReviews) return false;
+      const fromAltSource = ['receita_federal', 'google_search', 'instagram_search'].includes(l.source);
+      if (!fromAltSource && l.totalAvaliacoes < minReviews) return false;
       return true;
     });
     console.log(`✅ ${filtered.length} leads após filtro (removidos: ${discoverData.total - filtered.length})`);
 
     // ENRICHMENT
     console.log('\n📊 FASE 3: Enrichment...');
-    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filtered }, { timeout: 600000 });
+    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filtered, segmentId: config.id }, { timeout: 600000 });
     console.log(`✅ ${enrichRes.data.total} leads enriquecidos`);
 
     // DEEP ANALYSIS
     console.log('\n🧠 FASE 4: Deep Analysis...');
-    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads }, { timeout: 60000 });
+    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads, segmentId: config.id }, { timeout: 60000 });
     console.log(`✅ ${analyzeRes.data.total} leads analisados`);
 
     // QUALIFY
     console.log('\n🎯 FASE 5: Qualify...');
-    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads }, { timeout: 600000 });
+    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
 
     // EXPORT
     console.log('\n📄 Exportando...');
-    const cities = [{ city: 'Goiânia', state: 'GO' }];
-    const excelPath = await exportToExcel(qualifyRes.data.leads, cities);
+    const excelPath = await exportToExcel(qualifyRes.data.leads, cities, config);
 
     // SAVE JSON
+    const citiesStr = cities.map(c => `${c.city}/${c.state}`).join(', ');
     const leadsData = {
       leads: qualifyRes.data.leads,
       resumo: qualifyRes.data.resumo,
-      meta: { cities: 'Goiânia/GO', date: new Date().toISOString(), total: qualifyRes.data.total, version: 'v2' },
+      meta: { cities: citiesStr, date: new Date().toISOString(), total: qualifyRes.data.total, version: 'v2', segment: config.id },
     };
     if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
     fs.writeFileSync(LEADS_FILE, JSON.stringify(leadsData, null, 2));
@@ -572,33 +683,38 @@ app.post('/api/v2/pipeline-from-file', async (req, res) => {
 // ════════════════════════════════════════════════════
 app.post('/api/v2/pipeline-from-enriched', async (req, res) => {
   try {
-    const { file = '/tmp/enriched-result.json' } = req.body;
+    const { file = '/tmp/enriched-result.json', segmentId, cities: inputCities } = req.body;
+
+    const config = getConfig(segmentId);
 
     if (!fs.existsSync(file)) {
       return res.status(404).json({ error: `Arquivo não encontrado: ${file}` });
     }
 
     const enrichData = JSON.parse(fs.readFileSync(file, 'utf-8'));
-    console.log(`\n✅ Loaded ${enrichData.total || enrichData.leads?.length} leads enriquecidos`);
+    console.log(`\n✅ Loaded ${enrichData.total || enrichData.leads?.length} leads enriquecidos [${config.nome}]`);
+
+    // Detectar cidades dos dados ou usar as fornecidas
+    const cities = inputCities || extractCities(enrichData.leads);
 
     // ANALYZE
     console.log('\n🧠 FASE 4: Deep Analysis...');
-    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichData.leads }, { timeout: 60000 });
+    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichData.leads, segmentId: config.id }, { timeout: 60000 });
     console.log(`✅ ${analyzeRes.data.total} leads analisados`);
 
     // QUALIFY
     console.log('\n🎯 FASE 5: Qualify...');
-    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads }, { timeout: 600000 });
+    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
 
     // EXPORT + SAVE
     console.log('\n📄 Exportando...');
-    const cities = [{ city: 'Goiânia', state: 'GO' }];
-    const excelPath = await exportToExcel(qualifyRes.data.leads, cities);
+    const excelPath = await exportToExcel(qualifyRes.data.leads, cities, config);
+    const citiesStr = cities.map(c => `${c.city}/${c.state}`).join(', ');
     const leadsData = {
       leads: qualifyRes.data.leads,
       resumo: qualifyRes.data.resumo,
-      meta: { cities: 'Goiânia/GO', date: new Date().toISOString(), total: qualifyRes.data.total, version: 'v2' },
+      meta: { cities: citiesStr, date: new Date().toISOString(), total: qualifyRes.data.total, version: 'v2', segment: config.id },
     };
     if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
     fs.writeFileSync(LEADS_FILE, JSON.stringify(leadsData, null, 2));
@@ -628,12 +744,13 @@ app.post('/api/search', async (req, res) => {
     const googleKey = process.env.GOOGLE_MAPS_API_KEY;
     if (!googleKey) return res.status(400).json({ error: 'GOOGLE_MAPS_API_KEY não configurada' });
 
+    const config = getConfig();
     const allLeads = [];
     for (const { city, state } of cities) {
-      const gmResults = await searchGoogleMaps(city, state, googleKey, { queries });
+      const gmResults = await searchGoogleMaps(city, state, googleKey, { queries }, config);
       const fsqKey = process.env.FOURSQUARE_API_KEY;
-      const fsqResults = await searchFoursquare(city, state, fsqKey);
-      const merged = deduplicateLeads([...gmResults, ...fsqResults.map(l => ({ ...l, rating: 0, totalAvaliacoes: 0 }))]);
+      const fsqResults = await searchFoursquare(city, state, fsqKey, config);
+      const merged = deduplicateLeads([...gmResults, ...fsqResults.map(l => ({ ...l, rating: 0, totalAvaliacoes: 0 }))], config);
       allLeads.push(...merged.map(l => ({ ...l, cidade: city, estado: state })));
     }
     res.json({ total: allLeads.length, leads: allLeads });
@@ -643,7 +760,6 @@ app.post('/api/search', async (req, res) => {
 });
 
 app.post('/api/pipeline', async (req, res) => {
-  // Redireciona para v2
   console.log('[Pipeline v1] Redirecionando para v2...');
   try {
     const response = await axios.post(`http://localhost:${PORT}/api/v2/pipeline`, req.body, { timeout: 600000 });
@@ -656,9 +772,11 @@ app.post('/api/pipeline', async (req, res) => {
 // ════════════════════════════════════════════════════
 // EXPORT EXCEL
 // ════════════════════════════════════════════════════
-async function exportToExcel(leads, cities) {
+async function exportToExcel(leads, cities, config = null) {
+  if (!config) config = getConfig();
+
   const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'Bookou Lead Prospector v2';
+  workbook.creator = `${config.produto.nome} Lead Prospector v2`;
 
   const headerStyle = {
     font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 },
@@ -757,7 +875,7 @@ async function exportToExcel(leads, cities) {
   // ── ABA 2: MENSAGENS ──
   const wsMsgs = workbook.addWorksheet('Mensagens');
   wsMsgs.columns = [
-    { header: 'BARBEARIA', key: 'nome', width: 25 },
+    { header: config.nome.toUpperCase(), key: 'nome', width: 25 },
     { header: 'WHATSAPP', key: 'whatsapp', width: 20 },
     { header: 'MENSAGEM INICIAL', key: 'msg1', width: 60 },
     { header: 'FOLLOW-UP', key: 'msg2', width: 50 },
@@ -781,9 +899,10 @@ async function exportToExcel(leads, cities) {
   const cidadesStr = cities.map(c => `${c.city}/${c.state}`).join(', ');
   const data = new Date().toLocaleDateString('pt-BR');
 
-  wsResumo.addRow(['BOOKOU LEAD PROSPECTOR v2 — RELATÓRIO']);
+  wsResumo.addRow([`${config.produto.nome.toUpperCase()} LEAD PROSPECTOR v2 — RELATÓRIO`]);
   wsResumo.addRow([`Data: ${data}`]);
   wsResumo.addRow([`Cidades: ${cidadesStr}`]);
+  wsResumo.addRow([`Segmento: ${config.nome}`]);
   wsResumo.addRow([]);
   wsResumo.addRow(['RESUMO']);
   wsResumo.addRow(['Total de leads', leads.length]);
@@ -805,9 +924,9 @@ async function exportToExcel(leads, cities) {
   wsResumo.getColumn(1).width = 30;
   wsResumo.getColumn(2).width = 15;
   wsResumo.getRow(1).font = { bold: true, size: 14 };
-  wsResumo.getRow(5).font = { bold: true, size: 12 };
+  wsResumo.getRow(6).font = { bold: true, size: 12 };
 
-  const filename = `leads-v2-${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const filename = `leads-${config.id}-v2-${new Date().toISOString().slice(0, 10)}.xlsx`;
   const filepath = path.join(EXPORTS_DIR, filename);
   if (!fs.existsSync(EXPORTS_DIR)) fs.mkdirSync(EXPORTS_DIR, { recursive: true });
   await workbook.xlsx.writeFile(filepath);
@@ -818,6 +937,26 @@ async function exportToExcel(leads, cities) {
 // ════════════════════════════════════════════════════
 // HELPERS
 // ════════════════════════════════════════════════════
+
+/**
+ * Extrai cidades únicas dos leads (para pipelines from-file/from-enriched)
+ */
+function extractCities(leads) {
+  const seen = new Set();
+  const cities = [];
+  for (const lead of (leads || [])) {
+    const city = lead.cidade || lead.city || '';
+    const state = lead.estado || lead.state || '';
+    if (city && state) {
+      const key = `${city}|${state}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        cities.push({ city, state });
+      }
+    }
+  }
+  return cities.length > 0 ? cities : [{ city: 'Desconhecida', state: '??' }];
+}
 
 function buildResumo(leads) {
   return {
@@ -859,7 +998,6 @@ app.get('/api/whatsapp/connect', async (req, res) => {
   }
 });
 
-// Enviar mensagem para um lead
 app.post('/api/whatsapp/send', async (req, res) => {
   try {
     const { number, message } = req.body;
@@ -873,7 +1011,6 @@ app.post('/api/whatsapp/send', async (req, res) => {
   }
 });
 
-// Enviar mensagens em lote para lista de leads (com delay entre envios)
 app.post('/api/whatsapp/send-batch', async (req, res) => {
   try {
     const { leads, delayMs = 20000, onlyQuente = true, maxSends = 2 } = req.body;
@@ -890,7 +1027,6 @@ app.post('/api/whatsapp/send-batch', async (req, res) => {
       return res.json({ sent: 0, message: 'Nenhum lead elegível para envio' });
     }
 
-    // Verificar se WhatsApp está conectado antes de iniciar
     const status = await getWhatsAppStatus();
     if (!status.connected) {
       return res.status(503).json({ error: 'WhatsApp não conectado. Acesse /api/whatsapp/connect para gerar QR code.' });
@@ -907,7 +1043,6 @@ app.post('/api/whatsapp/send-batch', async (req, res) => {
       message: `Enviando para ${targets.length} de ${totalElegiveis} leads elegíveis (limite: ${maxSends})`,
     });
 
-    // Envio em background com delay
     (async () => {
       let sent = 0;
       let failed = 0;
@@ -938,10 +1073,39 @@ app.post('/api/whatsapp/send-batch', async (req, res) => {
 // ════════════════════════════════════════════════════
 // START
 // ════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════
+// CACHE & SEEN REGISTRY ENDPOINTS
+// ════════════════════════════════════════════════════
+app.get('/api/cache/stats', (req, res) => {
+  res.json(getCache().stats());
+});
+
+app.delete('/api/cache', (req, res) => {
+  const { namespace } = req.query;
+  getCache().clear(namespace || null);
+  res.json({ message: namespace ? `Cache "${namespace}" limpo` : 'Cache inteiro limpo' });
+});
+
+app.get('/api/seen/stats', (req, res) => {
+  const tenantId = req.query.tenantId || 'default';
+  res.json(getSeenRegistry().stats(tenantId));
+});
+
+app.get('/api/pipeline/runs', (req, res) => {
+  const tenantId = req.query.tenantId || 'default';
+  res.json(getStorage().listPipelineRuns(tenantId));
+});
+
+// ════════════════════════════════════════════════════
+// START + GRACEFUL SHUTDOWN
+// ════════════════════════════════════════════════════
 app.listen(PORT, () => {
-  console.log(`\n🔍 Bookou Lead Prospector v2 rodando em http://localhost:${PORT}`);
+  const config = getConfig();
+  console.log(`\n🔍 ${config.produto.nome} Lead Prospector v2.1 rodando em http://localhost:${PORT}`);
+  console.log(`   Segmento: ${config.nome} (${config.id})`);
   console.log(`   Dashboard: http://localhost:${PORT}`);
   console.log(`   Health: http://localhost:${PORT}/health`);
+  console.log(`   Segmentos: http://localhost:${PORT}/api/segments`);
   console.log(`   APIs:`);
   console.log(`   - Google Maps: ${process.env.GOOGLE_MAPS_API_KEY ? '✅' : '❌'}`);
   console.log(`   - Foursquare:  ${process.env.FOURSQUARE_API_KEY ? '✅' : '❌ (opcional)'}`);
@@ -950,5 +1114,21 @@ app.listen(PORT, () => {
   console.log(`   WhatsApp:`);
   console.log(`     Conectar: http://localhost:${PORT}/api/whatsapp/connect`);
   console.log(`     Status:   http://localhost:${PORT}/api/whatsapp/status`);
+  console.log(`   Infra:`);
+  console.log(`   - Cache:     ${process.env.CACHE_BACKEND || 'memory'}`);
+  console.log(`   - Storage:   ${process.env.STORAGE_BACKEND || 'file'}`);
+  console.log(`   - Enrich:    ${ENRICH_CONCURRENCY}x paralelo`);
   console.log('');
+});
+
+// Graceful shutdown — persistir cache no disco
+process.on('SIGTERM', () => {
+  console.log('[Shutdown] Persistindo cache...');
+  getCache().destroy();
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  console.log('[Shutdown] Persistindo cache...');
+  getCache().destroy();
+  process.exit(0);
 });

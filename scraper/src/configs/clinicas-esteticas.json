@@ -1,0 +1,87 @@
+{
+  "id": "clinicas-esteticas",
+  "nome": "Clinicas de Estetica",
+  "produto": {
+    "nome": "Bookou",
+    "descricao": "agendamento, financeiro, comissoes, lembretes WhatsApp",
+    "planos": [
+      { "nome": "Start", "preco": "R$79,90/mes" },
+      { "nome": "Profissional", "preco": "R$149,90/mes" }
+    ],
+    "trial": "14 dias gratis"
+  },
+  "busca": {
+    "queries": ["clinica de estetica", "estetica facial", "estetica corporal", "centro estetico", "studio de estetica", "clinica de beleza"],
+    "nearbyKeywords": ["estetica", "clinica beleza"],
+    "googlePlaceType": "beauty_salon",
+    "foursquareCategory": "11032",
+    "foursquareQuery": "clinica estetica",
+    "cnaes": ["9602502", "8650002"],
+    "instagramHashtags": ["estetica", "esteticafacial", "esteticacorporal", "clinicadeestetica", "beleza"],
+    "instagramBioKeywords": ["estetic", "beleza", "facial", "corporal", "peeling", "limpeza de pele", "botox", "preenchimento", "laser", "depilação"],
+    "instagramHandlePrefixes": ["clinica.estetica", "estetica", "studio.estetica", "clinicaestetica"]
+  },
+  "analise": {
+    "painKeywords": {
+      "fila": "\\b(fila|espera|esper[eiao]|demorou|demora|atras[oa]d?[oa]?|aguard)\\b",
+      "agendamento": "\\b(agenda[r]?|agend|marca[rç]|marcação|horário|ligar para|sem hora|por ordem)\\b",
+      "organizacao": "\\b(desorganizad|bagunça|confus|perdid|caótic|perdeu)\\b",
+      "atendimento_ruim": "\\b(mal atendid|grosso|grosseria|falta de educação|desrespeit)\\b",
+      "cancelamento": "\\b(cancel|desmarca|não avisou|faltou|no-show|não apareceu)\\b"
+    },
+    "positiveKeywords": "\\b(agend.*fácil|fácil.*agend|app.*ótimo|sistema.*bom|agenda.*online|marc.*online|pratic|sem espera)\\b",
+    "schedulingPainKeys": ["fila", "agendamento", "cancelamento"],
+    "competitors": {
+      "booksy": "booksy\\.com|booksy\\b",
+      "trinks": "trinks\\.com|trinks\\b",
+      "fresha": "fresha\\.com|fresha\\b",
+      "mindbody": "mindbody\\.com|mindbody\\b",
+      "vagaro": "vagaro\\.com|vagaro\\b",
+      "avec": "avec\\.digital|avec\\b",
+      "zenoti": "zenoti",
+      "glamapp": "glamapp",
+      "beautydock": "beautydock",
+      "goldie": "goldie\\.io|goldie\\b"
+    }
+  },
+  "qualificacao": {
+    "promptContexto": "Consultor B2B SaaS clinicas de estetica. Produto: Bookou (agendamento, financeiro, comissoes, lembretes WhatsApp). Start R$79,90/mes, Profissional R$149,90/mes.",
+    "doresTemplates": {
+      "sem_site": "Sem presença digital — clientes não conseguem agendar online",
+      "sem_agendamento": "Tem site mas sem agendamento online — perde clientes que querem praticidade",
+      "reclama_fila": "Clientes reclamam de espera e demora nas avaliações do Google",
+      "alto_volume": "Alto volume de clientes — gestão manual de agenda é insustentável",
+      "muitos_dias": "Abre 6+ dias por semana — precisa otimizar agenda e comissões",
+      "usa_concorrente": "Usa {concorrentes} — pode estar insatisfeito com custo ou funcionalidades",
+      "marketing_abandonado": "Marketing digital abandonado — precisa de ferramentas que simplifiquem a gestão",
+      "desorganizacao": "Reviews mencionam desorganização — sistema de gestão resolveria",
+      "default": ["Gestão manual de agenda", "Sem controle de cancelamentos e no-shows"]
+    },
+    "mensagensTemplates": {
+      "fila": "Oi! Vi nas avaliações da {nome} que a demanda é alta! ✨ Sou da {produto} — com nosso agendamento online, suas clientes marcam pelo celular e sem espera. Posso te mostrar em 5 min?",
+      "sem_site": "Oi! Vi a {nome} no Google e curti o trabalho! ✨ Criei uma plataforma de agendamento online pra {segmento} — suas clientes agendam pelo celular, sem precisar ligar. Posso te mostrar rapidinho?",
+      "concorrente": "Oi! Conheço a {nome} e sei que já usam sistema de agendamento. ✨ Sou da {produto} — além de agenda, temos financeiro, comissões e lembretes WhatsApp automáticos. Queria te mostrar, topa?",
+      "alto_volume": "Oi! A {nome} é referência no Google com {avaliacoes} avaliações! ✨ Sou da {produto}, plataforma de gestão pra {segmento} (agenda + financeiro + comissões). Queria te mostrar como pode ajudar, topa?",
+      "default": "Oi! Conheci a {nome} e achei o trabalho incrível! ✨ Sou da {produto} — plataforma de gestão pra {segmento} com agendamento online, financeiro e lembretes automáticos. Posso te mostrar em 5 min?",
+      "instagram": "Oi! Curti muito o trabalho da {nomeSimples}! 🔥 Criei uma plataforma de agendamento online pra {segmento}, posso te mostrar?",
+      "followup": "Oi de novo! 😊 Só passando pra ver se viu minha mensagem. Temos {trial} pra testar, sem compromisso!"
+    },
+    "argumentos": {
+      "fila": "Agendamento online elimina espera — suas clientes agendam pelo celular",
+      "sem_site": "Página de agendamento online pronta — suas clientes agendam sem ligar",
+      "concorrente": "{produto} é mais completo (agenda + financeiro + comissões) e com suporte brasileiro",
+      "alto_volume": "Gestão completa: agenda, financeiro, comissões e lembretes automáticos",
+      "default": "Agendamento online + gestão financeira em um só lugar"
+    },
+    "perfilLabels": {
+      "grande": "{segmentoSingular} grande e estabelecid{genero}",
+      "popular": "{segmentoSingular} popular",
+      "crescimento": "{segmentoSingular} em crescimento",
+      "bairro": "{segmentoSingular} de bairro",
+      "pequeno": "{segmentoSingular} pequen{genero}/nov{genero}"
+    },
+    "segmentoSingular": "Clinica",
+    "segmentoPlural": "clinicas de estetica",
+    "genero": "a"
+  }
+}

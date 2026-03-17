@@ -1,20 +1,15 @@
 const axios = require('axios');
 
-const SEARCH_QUERIES = [
-  'barbearia',
-  'barber shop',
-  'barbearia masculina',
-  'studio barber',
-  'barbeiro',
-  'salão masculino',
-];
-
 // ════════════════════════════════════════════════════
 // V1 — TEXT SEARCH (mantido para compatibilidade)
 // ════════════════════════════════════════════════════
 
-async function searchGoogleMaps(city, state, apiKey, options = {}) {
-  const { maxPages = 3, queries = SEARCH_QUERIES } = options;
+async function searchGoogleMaps(city, state, apiKey, options = {}, config = null) {
+  const defaultQueries = config ? config.busca.queries : [
+    'barbearia', 'barber shop', 'barbearia masculina',
+    'studio barber', 'barbeiro', 'salão masculino',
+  ];
+  const { maxPages = 3, queries = defaultQueries } = options;
   const allResults = [];
   const seenPlaceIds = new Set();
 
@@ -67,7 +62,7 @@ async function searchGoogleMaps(city, state, apiKey, options = {}) {
     }
   }
 
-  console.log(`[Google Maps] Total: ${allResults.length} barbearias únicas em ${city}/${state}`);
+  console.log(`[Google Maps] Total: ${allResults.length} resultados únicos em ${city}/${state}`);
   return allResults;
 }
 
@@ -76,19 +71,20 @@ async function searchGoogleMaps(city, state, apiKey, options = {}) {
 // ════════════════════════════════════════════════════
 
 /**
- * Busca barbearias usando Nearby Search em grid de pontos
- * Cobre a cidade inteira com overlapping de raio
+ * Busca usando Nearby Search em grid de pontos
  * @param {Array} gridPoints - [{ lat, lng }, ...]
  * @param {number} radiusMeters - Raio em metros
  * @param {string} apiKey - Google Maps API key
+ * @param {Object} config - Config do segmento
  * @returns {Array} Leads únicos
  */
-async function nearbySearchGrid(gridPoints, radiusMeters, apiKey) {
+async function nearbySearchGrid(gridPoints, radiusMeters, apiKey, config = null) {
   const allResults = [];
   const seenPlaceIds = new Set();
   let pointIndex = 0;
 
-  const keywords = ['barbearia', 'barber'];
+  const keywords = config ? config.busca.nearbyKeywords : ['barbearia', 'barber'];
+  const placeType = config ? config.busca.googlePlaceType : 'hair_care';
 
   for (const point of gridPoints) {
     pointIndex++;
@@ -106,7 +102,7 @@ async function nearbySearchGrid(gridPoints, radiusMeters, apiKey) {
           location: `${point.lat},${point.lng}`,
           radius: radiusMeters,
           keyword,
-          type: 'hair_care',
+          type: placeType,
           key: apiKey,
           language: 'pt-BR',
         };
@@ -123,7 +119,6 @@ async function nearbySearchGrid(gridPoints, radiusMeters, apiKey) {
 
         if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
           if (data.status === 'INVALID_REQUEST' && pageToken) {
-            // Token expirado, tentar novamente com mais delay
             await sleep(3000);
             page++;
             continue;
@@ -161,21 +156,20 @@ async function nearbySearchGrid(gridPoints, radiusMeters, apiKey) {
     await sleep(300);
   }
 
-  console.log(`[Nearby] Total: ${allResults.length} barbearias únicas`);
+  console.log(`[Nearby] Total: ${allResults.length} resultados únicos`);
   return allResults;
 }
 
 /**
  * Busca combinada: Nearby Search (grid) + Text Search (complementar)
- * Maximiza cobertura sem duplicatas
  */
-async function combinedSearch(city, state, gridPoints, radiusMeters, apiKey) {
+async function combinedSearch(city, state, gridPoints, radiusMeters, apiKey, config = null) {
   console.log(`\n${'═'.repeat(60)}`);
   console.log(`BUSCA: ${city}/${state} (${gridPoints.length} pontos, raio ${radiusMeters}m)`);
   console.log('═'.repeat(60));
 
-  const results = await nearbySearchGrid(gridPoints, radiusMeters, apiKey);
-  console.log(`[Busca] ${results.length} barbearias únicas em ${city}/${state}`);
+  const results = await nearbySearchGrid(gridPoints, radiusMeters, apiKey, config);
+  console.log(`[Busca] ${results.length} resultados únicos em ${city}/${state}`);
   return results;
 }
 
@@ -183,9 +177,6 @@ async function combinedSearch(city, state, gridPoints, radiusMeters, apiKey) {
 // PLACE DETAILS (otimizado)
 // ════════════════════════════════════════════════════
 
-/**
- * Busca detalhes completos usando fields otimizados para reduzir custo
- */
 async function getPlaceDetails(placeId, apiKey) {
   try {
     const { data } = await axios.get(
@@ -264,5 +255,4 @@ module.exports = {
   nearbySearchGrid,
   combinedSearch,
   getPlaceDetails,
-  SEARCH_QUERIES,
 };
