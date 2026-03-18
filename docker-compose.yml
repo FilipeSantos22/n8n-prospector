@@ -33,6 +33,7 @@ services:
       - GOOGLE_SEARCH_API_KEY=${GOOGLE_SEARCH_API_KEY:-}
       - GOOGLE_SEARCH_ENGINE_ID=${GOOGLE_SEARCH_ENGINE_ID:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GROQ_API_KEY=${GROQ_API_KEY:-}
       - EVOLUTION_API_URL=http://evolution:8080
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-bookou-evolution-key}
       - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-bookou}
@@ -48,7 +49,7 @@ services:
       - evolution
 
   evolution:
-    image: atendai/evolution-api:latest
+    image: atendai/evolution-api:v1.8.2
     container_name: evolution-api
     restart: unless-stopped
     ports:

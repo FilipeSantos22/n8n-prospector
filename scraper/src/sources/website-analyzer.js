@@ -24,8 +24,48 @@ const DEFAULT_COMPETITORS = {
 };
 
 /**
+ * Detecta o CMS/plataforma do website a partir do HTML
+ */
+function detectCMS(html) {
+  if (/wp-content|wp-includes|wordpress/i.test(html)) return 'wordpress';
+  if (/meta[^>]+name="generator"[^>]+content="Wix|wixsite\.com|wix\.com/i.test(html)) return 'wix';
+  if (/squarespace|sqsp/i.test(html)) return 'squarespace';
+  if (/godaddy/i.test(html)) return 'godaddy';
+  if (/webflow/i.test(html)) return 'webflow';
+  if (/cdn\.shopify|shopify/i.test(html)) return 'shopify';
+  return 'unknown';
+}
+
+/**
+ * Detecta pixels e ferramentas de analytics no HTML
+ */
+function detectAnalytics(html) {
+  const hasGoogleAnalytics = /gtag\(|google-analytics\.com|ga\.js|gtm\.js|['"](G-|UA-|GT-)[A-Z0-9]/i.test(html);
+  const hasFacebookPixel = /fbq\(|connect\.facebook\.net|facebook.*pixel/i.test(html);
+  const hasTikTokPixel = /analytics\.tiktok/i.test(html);
+  const hasHotjar = /hotjar/i.test(html);
+
+  return { hasGoogleAnalytics, hasFacebookPixel, hasTikTokPixel, hasHotjar };
+}
+
+/**
+ * Detecta gateways de pagamento no HTML
+ */
+function detectPaymentGateways(html) {
+  const gateways = [];
+  if (/pagseguro/i.test(html)) gateways.push('pagseguro');
+  if (/mercadopago|mercadolivre/i.test(html)) gateways.push('mercadopago');
+  if (/js\.stripe\.com|stripe\.com/i.test(html)) gateways.push('stripe');
+  if (/paypal/i.test(html)) gateways.push('paypal');
+  if (/picpay/i.test(html)) gateways.push('picpay');
+
+  return gateways;
+}
+
+/**
  * Analisa o website de um estabelecimento
- * Detecta: concorrentes, contatos, redes sociais, maturidade digital
+ * Detecta: concorrentes, contatos, redes sociais, maturidade digital,
+ *          CMS, analytics, pixels, gateways de pagamento e responsividade mobile
  */
 async function analyzeWebsite(url, config = null) {
   if (!url) return { analyzed: false, reason: 'sem_website' };
@@ -82,7 +122,34 @@ async function analyzeWebsite(url, config = null) {
     const temFormulario = /<form/i.test(html);
     const temChat = /tawk\.to|tidio|zendesk|intercom|crisp|jivochat/i.test(html);
 
-    // 8. Maturidade digital (0-10)
+    // 8. CMS / Plataforma
+    const cms = detectCMS(html);
+
+    // 9. Analytics e pixels
+    const { hasGoogleAnalytics, hasFacebookPixel, hasTikTokPixel, hasHotjar } = detectAnalytics(html);
+
+    // 10. Gateways de pagamento
+    const paymentGateways = detectPaymentGateways(html);
+    const hasPaymentGateway = paymentGateways.length > 0;
+
+    // 11. Responsividade mobile
+    const isMobileResponsive = /meta[^>]+name="viewport"[^>]+content="[^"]*width=device-width/i.test(html);
+
+    // 12. Tech stack consolidado
+    const techStack = {
+      cms,
+      analytics: {
+        googleAnalytics: hasGoogleAnalytics,
+        facebookPixel: hasFacebookPixel,
+        tikTokPixel: hasTikTokPixel,
+        hotjar: hasHotjar,
+      },
+      payments: paymentGateways,
+      chat: temChat,
+      mobileResponsive: isMobileResponsive,
+    };
+
+    // 13. Maturidade digital (0-10)
     let maturidade = 0;
     if (html.length > 10000) maturidade += 1;
     if (html.length > 50000) maturidade += 1;
@@ -93,6 +160,12 @@ async function analyzeWebsite(url, config = null) {
     if (Object.keys(socialMedia).length > 0) maturidade += 1;
     if (url.startsWith('https')) maturidade += 1;
     if (temChat) maturidade += 1;
+    // Novos sinais de maturidade
+    if (hasGoogleAnalytics) maturidade += 1;
+    if (hasFacebookPixel) maturidade += 1;
+    if (hasPaymentGateway) maturidade += 1;
+    if (isMobileResponsive) maturidade += 1;
+    if (cms !== 'unknown') maturidade += 1;
 
     return {
       analyzed: true,
@@ -108,6 +181,14 @@ async function analyzeWebsite(url, config = null) {
       emails,
       socialMedia,
       metaTags,
+      // Novos campos
+      cms,
+      hasGoogleAnalytics,
+      hasFacebookPixel,
+      hasPaymentGateway,
+      paymentGateways,
+      isMobileResponsive,
+      techStack,
       maturidadeDigital: Math.min(10, maturidade),
     };
   } catch (err) {

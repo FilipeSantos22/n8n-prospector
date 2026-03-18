@@ -457,7 +457,12 @@ app.post('/api/v2/analyze', async (req, res) => {
 
     const analyzed = leads.map(lead => {
       const reviewAnalysis = analyzeReviews(lead.reviews, config);
-      const marketingStatus = analyzeMarketingStatus(lead.instagram, lead.websiteAnalysis);
+      const marketingStatus = analyzeMarketingStatus(lead.instagram, lead.websiteAnalysis, {
+        hasGoogleMaps: !!lead.place_id,
+        hasWhatsapp: !!lead.whatsapp,
+        hasFacebook: !!lead.websiteAnalysis?.socialMedia?.facebook,
+        hasEmail: !!lead.email,
+      });
 
       return {
         ...lead,

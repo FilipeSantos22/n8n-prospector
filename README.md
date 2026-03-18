@@ -55,30 +55,48 @@ Para cada lead, busca dados adicionais em até 4 fontes:
 
 Duas análises paralelas sobre os dados enriquecidos:
 
-**Análise de Reviews** — roda cada regex de `config.analise.painKeywords` sobre o texto das reviews. Conta ocorrências por tipo de dor, detecta elogios ao agendamento (sinal de que já resolveram o problema). Marca `hasSchedulingPain` se soma das dores-chave >= 2.
+**Análise de Reviews** — sistema inteligente de análise de sentimento:
+- Detecção de dor com **verificação de negação** ("sem fila" não conta como reclamação de fila)
+- **Ponderação por recência** — reviews do último mês pesam 3x mais que reviews de 1 ano atrás
+- **Análise de respostas do dono** — detecta quando o dono diz "ligue pra marcar" (agendamento manual = sinal de ouro)
+- **Velocidade de reviews** — calcula se o negócio está crescendo (mais reviews recentes que a média)
+- **Distribuição bimodal** — detecta quando há muitas notas 5 E muitas notas 1-2 (ótimo serviço + caos operacional)
+- **Detecção de no-show** — "marquei e não atenderam", "horário errado", "cancelou meu horário"
 
-**Análise de Marketing** — classifica presença digital (alta/média/baixa) baseado em seguidores Instagram, maturidade do site, e atividade. Detecta Instagram abandonado (< 10 posts).
+**Análise de Marketing** — classifica maturidade digital em **5 níveis**:
+- Nível 0 "Invisível" — só Google Maps
+- Nível 1 "Básico" — ficha + talvez Instagram pequeno
+- Nível 2 "Ativo" — site + Instagram com seguidores (sweet spot pra venda)
+- Nível 3 "Engajado" — WhatsApp Business, posta regularmente
+- Nível 4 "Sofisticado" — usa analytics, ads, concorrente
+
+Também detecta **fragmentação de canais** (vários canais sem integração = dor de gestão).
 
 ### Fase 5 — Qualify (qualificação)
 
 Dois caminhos possíveis:
 
 **Caminho IA** (se `ANTHROPIC_API_KEY` configurada):
-- Pré-qualifica por regras — só chama IA para leads com score mínimo (20 para fontes alternativas, 35 para Google Maps)
-- Envia contexto do lead + prompt do config para Claude Haiku
+- Pré-qualifica por regras — só chama IA para leads com score >= 55 (35 para fontes alternativas)
+- Envia contexto enriquecido: reviews negativos completos, respostas do dono, maturidade digital, estimativa de staff
 - Recebe score, classificação, mensagens personalizadas, plano recomendado
 
 **Caminho regras** (fallback ou pré-score baixo):
+
+**Hard disqualifiers** — antes de qualquer scoring, descarta automaticamente:
+- Estabelecimento fechado (permanente ou temporariamente)
+- CNPJ baixado ou inapto
+- Rating < 3.0 com 20+ avaliações (negócio com problemas graves)
 
 Score ponderado em **5 eixos**:
 
 | Eixo | Peso | Sinais usados |
 |---|---|---|
-| **Oportunidade** | 35% | Sem site, sem agendamento online, dores em reviews, marketing abandonado, Instagram sem agenda, CNPJ sem digital |
-| **Alcançabilidade** | 25% | WhatsApp (45pts), Instagram (25pts), email (15pts), telefone, Google Maps URL |
-| **Tamanho** | 15% | Avaliações Google > seguidores Instagram > porte CNPJ (MEI/ME/EPP) > anos de existência |
-| **Urgência** | 10% | Dores em reviews, zero presença digital, Instagram abandonado, alto volume sem agenda, concorrente fraco |
-| **Confiança** | 15% | Quantidade de fontes, place_id, CNPJ, dados de contato, coordenadas, reviews disponíveis |
+| **Oportunidade** | 35% | Sem site, sem agendamento, dores em reviews, marketing abandonado, Instagram sem agenda, CNPJ sem digital, CMS pago (Wix/Squarespace = aceita SaaS), **concorrente forte penaliza -30**, **IG com agendamento penaliza -25**, **site com agenda+chat penaliza -40**, **sinal combinado WhatsApp+sem agenda +25** |
+| **Alcançabilidade** | 25% | WhatsApp (45pts), Instagram (25pts), email (15pts), telefone, Google Maps URL, **zero contato penaliza -50** |
+| **Tamanho** | 15% | Avaliações Google > seguidores IG > porte CNPJ > anos de existência, **sweet spot 50-200 reviews (+15 bonus)**, **rating 4.0-4.7 > 5.0** |
+| **Urgência** | 10% | Dores ponderadas por recência, **dono faz agendamento manual (+30)**, **review velocity alta (+20)**, **distribuição bimodal (+15)**, **no-show (+20)**, **canais fragmentados (+10)**, concorrente fraco, zero digital |
+| **Confiança** | 15% | Quantidade de fontes, place_id, CNPJ, contato, coordenadas, reviews, **dono responde avaliações (+10)**, **investe em analytics (+10)** |
 
 **Classificação final:**
 - **QUENTE** (>= 65) — prioridade máxima de abordagem
@@ -87,12 +105,18 @@ Score ponderado em **5 eixos**:
 
 Para cada lead qualificado, gera automaticamente:
 - Mensagem WhatsApp personalizada pela dor principal
-- Mensagem Instagram
-- Mensagem de follow-up
+- Mensagem Instagram e follow-up
 - Argumento principal de venda
-- Plano recomendado (baseado em tamanho)
-- Melhor horário de contato (analisa horários de funcionamento)
+- Plano recomendado (baseado em avaliações, seguidores, porte CNPJ, velocidade)
+- Melhor horário de contato + sazonalidade (Jan/Mar/Jul = alta, Dez = baixa)
 - Nível de risco e motivo
+- **Tags de qualificação**: `SWEET_SPOT_SIZE`, `CRESCIMENTO_RAPIDO`, `AGENDA_MANUAL`, `BIMODAL_REVIEWS`, `NO_SHOW_PAIN`, `RISCO_BUDGET`, `DESCARTADO`
+
+**Detecção de tech stack do site:**
+- CMS (WordPress, Wix, Squarespace, Shopify, Webflow, GoDaddy)
+- Analytics (Google Analytics, Facebook Pixel, TikTok Pixel, Hotjar)
+- Pagamento (PagSeguro, Mercado Pago, Stripe, PayPal, PicPay)
+- Responsividade mobile
 
 ### Output
 
