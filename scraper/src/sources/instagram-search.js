@@ -158,16 +158,19 @@ function buildHashtags(city, state, config = null) {
 }
 
 /**
- * Scrape de perfis que postaram em uma hashtag (via web)
+ * Scrape de perfis que postaram em uma hashtag
+ * Estratégia: tenta a API graphql pública; se falhar, faz parse do HTML.
+ * Instagram bloqueia agressivamente — o resultado pode ser vazio.
  */
 async function scrapeHashtagProfiles(hashtag) {
+  // Estratégia 1: página de hashtag via web (funciona sem login na maioria dos casos)
   try {
     const { data, status } = await axios.get(`https://www.instagram.com/explore/tags/${hashtag}/`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': randomUA(),
         'Accept': 'text/html,application/xhtml+xml',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-        'Cookie': '',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en;q=0.5',
+        'Sec-Fetch-Mode': 'navigate',
       },
       timeout: 10000,
       maxRedirects: 3,
@@ -176,45 +179,81 @@ async function scrapeHashtagProfiles(hashtag) {
 
     if (status >= 400) return [];
 
-    // Extrair usernames do HTML/JSON embeddado
     const profiles = [];
-    const usernamePattern = /"username":"([a-zA-Z0-9_.]+)"/g;
-    let match;
     const seen = new Set();
 
+    // Extrair usernames de JSON embeddado no HTML
+    const usernamePattern = /"username"\s*:\s*"([a-zA-Z0-9_.]{3,30})"/g;
+    let match;
     while ((match = usernamePattern.exec(data)) !== null) {
       const handle = match[1];
-      if (!seen.has(handle) && handle !== 'instagram' && handle.length >= 3) {
+      if (!seen.has(handle) && !EXCLUDED_HANDLES.has(handle)) {
         seen.add(handle);
         profiles.push({ handle });
       }
     }
 
-    // Também tentar extrair de links de perfil
+    // Extrair de links de perfil
     const linkPattern = /instagram\.com\/([a-zA-Z0-9_.]{3,30})\//g;
     while ((match = linkPattern.exec(data)) !== null) {
       const handle = match[1];
-      const excluded = ['explore', 'p', 'reel', 'stories', 'accounts', 'tags', 'locations', 'directory'];
-      if (!seen.has(handle) && !excluded.includes(handle)) {
+      if (!seen.has(handle) && !EXCLUDED_HANDLES.has(handle)) {
         seen.add(handle);
         profiles.push({ handle });
       }
     }
 
-    return profiles.slice(0, 20); // Limitar por hashtag
+    return profiles.slice(0, 20);
   } catch (err) {
+    console.warn(`[Instagram Search] scrapeHashtagProfiles(#${hashtag}) falhou:`, err.message);
     return [];
   }
 }
 
+const EXCLUDED_HANDLES = new Set([
+  'instagram', 'explore', 'p', 'reel', 'reels', 'stories',
+  'accounts', 'tags', 'locations', 'directory', 'about', 'legal',
+]);
+
 /**
  * Busca detalhes de um perfil do Instagram (web scraping)
+ * Tenta 2 abordagens: API ?__a=1 (mais dados) e fallback HTML.
  */
 async function fetchProfileDetails(handle) {
+  // Tentativa 1: endpoint ?__a=1&__d=dis (retorna JSON quando disponível)
+  try {
+    const { data, status } = await axios.get(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${handle}`, {
+      headers: {
+        'User-Agent': randomUA(),
+        'X-IG-App-ID': '936619743392459',
+        'Accept': '*/*',
+        'Accept-Language': 'pt-BR,pt;q=0.9',
+      },
+      timeout: 8000,
+      validateStatus: (s) => s < 500,
+    });
+
+    if (status === 200 && data?.data?.user) {
+      const user = data.data.user;
+      const bio = user.biography || '';
+      const externalUrl = user.external_url || '';
+      return {
+        nome: user.full_name || handle,
+        bio,
+        seguidores: user.edge_followed_by?.count ?? null,
+        posts: user.edge_owner_to_timeline_media?.count ?? null,
+        linkExterno: externalUrl,
+        isBusiness: user.is_business_account || false,
+        temWhatsappLink: /wa\.me|whatsapp|api\.whatsapp/i.test(externalUrl + ' ' + bio),
+      };
+    }
+  } catch (_) { /* fallback abaixo */ }
+
+  // Tentativa 2: parse do HTML da página de perfil
   try {
     const { data, status } = await axios.get(`https://www.instagram.com/${handle}/`, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': randomUA(),
         'Accept': 'text/html',
         'Accept-Language': 'pt-BR,pt;q=0.9',
       },
@@ -225,12 +264,12 @@ async function fetchProfileDetails(handle) {
 
     if (status === 404 || status === 302) return null;
 
-    const bioMatch = data.match(/"biography":"([^"]*?)"/);
-    const followersMatch = data.match(/"edge_followed_by":\{"count":(\d+)\}/);
-    const postsMatch = data.match(/"edge_owner_to_timeline_media":\{"count":(\d+)\}/);
-    const nameMatch = data.match(/"full_name":"([^"]*?)"/);
-    const externalUrlMatch = data.match(/"external_url":"([^"]*?)"/);
-    const isBusinessMatch = data.match(/"is_business_account":(true|false)/);
+    const bioMatch = data.match(/"biography"\s*:\s*"([^"]*?)"/);
+    const followersMatch = data.match(/"edge_followed_by"\s*:\s*\{\s*"count"\s*:\s*(\d+)\s*\}/);
+    const postsMatch = data.match(/"edge_owner_to_timeline_media"\s*:\s*\{\s*"count"\s*:\s*(\d+)/);
+    const nameMatch = data.match(/"full_name"\s*:\s*"([^"]*?)"/);
+    const externalUrlMatch = data.match(/"external_url"\s*:\s*"([^"]*?)"/);
+    const isBusinessMatch = data.match(/"is_business_account"\s*:\s*(true|false)/);
 
     const bio = bioMatch ? decodeUnicode(bioMatch[1]) : '';
     const externalUrl = externalUrlMatch ? decodeUnicode(externalUrlMatch[1]) : '';
@@ -242,11 +281,17 @@ async function fetchProfileDetails(handle) {
       posts: postsMatch ? parseInt(postsMatch[1]) : null,
       linkExterno: externalUrl,
       isBusiness: isBusinessMatch?.[1] === 'true',
-      temWhatsappLink: externalUrl.includes('wa.me') || externalUrl.includes('whatsapp') || bio.toLowerCase().includes('whatsapp'),
+      temWhatsappLink: /wa\.me|whatsapp|api\.whatsapp/i.test(externalUrl + ' ' + bio),
     };
   } catch (err) {
     return null;
   }
+}
+
+function randomUA() {
+  const versions = ['120.0.0.0', '121.0.0.0', '122.0.0.0', '123.0.0.0', '124.0.0.0', '125.0.0.0'];
+  const v = versions[Math.floor(Math.random() * versions.length)];
+  return `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${v} Safari/537.36`;
 }
 
 /**

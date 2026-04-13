@@ -1,7 +1,7 @@
 const axios = require('axios');
 
 const EVOLUTION_URL = process.env.EVOLUTION_API_URL || 'http://evolution:8080';
-const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY || 'bookou-evolution-key';
+const EVOLUTION_KEY = process.env.EVOLUTION_API_KEY || '';
 const INSTANCE_NAME = process.env.EVOLUTION_INSTANCE || 'bookou';
 
 const api = axios.create({
@@ -41,6 +41,11 @@ async function connectWhatsApp() {
       qrcode: true,
       integration: 'WHATSAPP-BAILEYS',
     }).catch(() => {}); // ignora erro de "já existe"
+
+    // Configurar webhook para receber mensagens
+    await configureWebhook().catch(err =>
+      console.warn('[WhatsApp] Webhook config falhou (não-crítico):', err.message)
+    );
 
     // Buscar QR code
     const { data } = await api.get(`/instance/connect/${INSTANCE_NAME}`);
@@ -87,4 +92,18 @@ async function sendWhatsApp(number, message) {
   }
 }
 
-module.exports = { sendWhatsApp, getWhatsAppStatus, connectWhatsApp };
+/**
+ * Configura webhook na Evolution API para receber mensagens
+ */
+async function configureWebhook() {
+  const webhookUrl = `http://scraper:${process.env.PORT || 3099}/api/whatsapp/webhook`;
+  await api.post(`/webhook/set/${INSTANCE_NAME}`, {
+    enabled: true,
+    url: webhookUrl,
+    webhookByEvents: false,
+    events: ['MESSAGES_UPSERT'],
+  });
+  console.log(`[WhatsApp] Webhook configurado: ${webhookUrl}`);
+}
+
+module.exports = { sendWhatsApp, getWhatsAppStatus, connectWhatsApp, configureWebhook };

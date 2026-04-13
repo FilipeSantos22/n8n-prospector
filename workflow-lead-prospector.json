@@ -11,11 +11,21 @@
     },
     {
       "parameters": {
+        "jsCode": "// Configure aqui as cidades e parâmetros de prospecção\nreturn [{\n  json: {\n    cities: [\n      { city: 'Goiânia', state: 'GO' },\n    ],\n    minReviews: 5,\n    radiusKm: 5,\n    maxSends: 5,\n    delayMs: 20000\n  }\n}];"
+      },
+      "id": "config",
+      "name": "Configuração",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
         "method": "POST",
-        "url": "http://scraper:3099/api/pipeline",
+        "url": "http://scraper:3099/api/v2/pipeline",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"cities\": [\n    { \"city\": \"Goiânia\", \"state\": \"GO\" }\n  ],\n  \"minReviews\": 5,\n  \"radiusKm\": 5\n}",
+        "jsonBody": "={{ { cities: $json.cities, minReviews: $json.minReviews, radiusKm: $json.radiusKm } }}",
         "options": {
           "timeout": 600000
         }
@@ -24,7 +34,7 @@
       "name": "Pipeline Completo",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [250, 300]
+      "position": [450, 300]
     },
     {
       "parameters": {
@@ -35,7 +45,7 @@
       "name": "Separar Leads",
       "type": "n8n-nodes-base.splitOut",
       "typeVersion": 1,
-      "position": [480, 300]
+      "position": [680, 300]
     },
     {
       "parameters": {
@@ -57,7 +67,7 @@
       "name": "Tem Contato?",
       "type": "n8n-nodes-base.filter",
       "typeVersion": 2,
-      "position": [700, 300]
+      "position": [900, 300]
     },
     {
       "parameters": {
@@ -69,7 +79,7 @@
       "name": "Exportar CSV",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
-      "position": [920, 180]
+      "position": [1120, 180]
     },
     {
       "parameters": {
@@ -79,7 +89,7 @@
       "name": "Agrupar Leads",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 420]
+      "position": [1120, 420]
     },
     {
       "parameters": {
@@ -87,30 +97,97 @@
         "url": "http://scraper:3099/api/whatsapp/send-batch",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ { leads: $json.leads, onlyQuente: true, maxSends: 2, delayMs: 20000 } }}",
+        "jsonBody": "={{ { leads: $json.leads, onlyQuente: true, maxSends: $('Configuração').item.json.maxSends, delayMs: $('Configuração').item.json.delayMs } }}",
         "options": {
-          "timeout": 30000
+          "timeout": 300000
         }
       },
       "id": "send-whatsapp",
       "name": "Enviar WhatsApp (Lote)",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
-      "position": [1140, 420]
+      "position": [1340, 420]
     },
     {
       "parameters": {
-        "jsCode": "const leads = $input.all();\nconst total = leads.length;\nconst quentes = leads.filter(l => l.json.qualification?.classificacao === 'QUENTE').length;\nconst mornos = leads.filter(l => l.json.qualification?.classificacao === 'MORNO').length;\nconst comWa = leads.filter(l => l.json.whatsapp).length;\nconst aiAnalyzed = leads.filter(l => l.json.qualification?.ai_analyzed).length;\n\nreturn [{\n  json: {\n    mensagem: `📊 Prospecção finalizada!\\n\\nTotal: ${total} leads com contato\\n🔥 Quentes: ${quentes}\\n🟡 Mornos: ${mornos}\\n📱 Com WhatsApp: ${comWa}\\n🤖 Qualificados por IA: ${aiAnalyzed}\\n\\nExcel exportado em /exports/`\n  }\n}];"
+        "jsCode": "const leads = $input.all();\nconst total = leads.length;\nconst quentes = leads.filter(l => l.json.qualification?.classificacao === 'QUENTE').length;\nconst mornos = leads.filter(l => l.json.qualification?.classificacao === 'MORNO').length;\nconst comWa = leads.filter(l => l.json.whatsapp).length;\nconst aiAnalyzed = leads.filter(l => l.json.qualification?.ai_analyzed).length;\n\nreturn [{\n  json: {\n    mensagem: `Prospeccao finalizada!\\n\\nTotal: ${total} leads com contato\\nQuentes: ${quentes}\\nMornos: ${mornos}\\nCom WhatsApp: ${comWa}\\nQualificados por IA: ${aiAnalyzed}\\n\\nExcel exportado em /exports/`\n  }\n}];"
       },
       "id": "summary",
       "name": "Resumo Final",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [920, 300]
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "crm-enabled",
+              "leftValue": "={{ $env.CRM_API_URL && $env.CRM_INGEST_API_KEY && $env.CRM_TENANT_ID ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "class-allowed",
+              "leftValue": "={{ ($env.CRM_INGEST_CLASSES || 'QUENTE,MORNO').split(',').map(s => s.trim()).includes($json.qualification?.classificacao) ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-crm",
+      "name": "CRM: filtro classificação",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1120, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "const l = $json;\nconst q = l.qualification || {};\nconst ig = typeof l.instagram === 'object' ? l.instagram : null;\nconst payload = {\n  nome: l.nome || l.name,\n  whatsapp: l.whatsapp || null,\n  telefone: l.telefone || l.phone || null,\n  email: l.email || null,\n  endereco: l.endereco || l.address || null,\n  segmento: l.segmento || l.segment || $env.SEGMENT_ID || null,\n  source: l.source || l.fonte || 'prospector',\n  score: Number(q.score ?? l.score ?? 0),\n  classificacao: q.classificacao,\n  argumento_principal: q.argumento_principal || null,\n  mensagem_whatsapp: q.mensagem_whatsapp || null,\n  plano_recomendado: q.plano_recomendado || null,\n  tags: Array.isArray(q.tags) ? q.tags : [],\n  external_refs: {\n    place_id: l.place_id || null,\n    cnpj: l.cnpj || null,\n    instagram_handle: ig?.handle || (typeof l.instagram === 'string' ? l.instagram : null),\n    website: l.website || null\n  },\n  extra: {\n    rating: l.rating ?? null,\n    reviews_count: l.totalAvaliacoes ?? l.reviews_count ?? l.user_ratings_total ?? null,\n    cidade: l.cidade ?? null,\n    perfil: q.perfil ?? null,\n    dores_provaveis: q.dores_provaveis ?? null,\n    mensagem_instagram: q.mensagem_instagram ?? null,\n    mensagem_followup: q.mensagem_followup ?? null,\n    melhor_horario_contato: q.melhor_horario_contato ?? null,\n    ai_analyzed: q.ai_analyzed ?? false\n  }\n};\nreturn [{ json: payload }];"
+      },
+      "id": "crm-map",
+      "name": "CRM: mapear payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 560]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRM_API_URL }}/api/v1/crm/leads/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.CRM_INGEST_API_KEY }}" },
+            { "name": "x-tenant-id", "value": "={{ $env.CRM_TENANT_ID }}" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000,
+          "retry": { "enabled": true, "maxTries": 3, "waitBetweenTries": 2000 }
+        }
+      },
+      "id": "crm-ingest",
+      "name": "CRM: ingest lead",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 560]
     }
   ],
   "connections": {
     "Iniciar Prospecção": {
+      "main": [[{ "node": "Configuração", "type": "main", "index": 0 }]]
+    },
+    "Configuração": {
       "main": [[{ "node": "Pipeline Completo", "type": "main", "index": 0 }]]
     },
     "Pipeline Completo": {
@@ -124,12 +201,19 @@
         [
           { "node": "Exportar CSV", "type": "main", "index": 0 },
           { "node": "Resumo Final", "type": "main", "index": 0 },
-          { "node": "Agrupar Leads", "type": "main", "index": 0 }
+          { "node": "Agrupar Leads", "type": "main", "index": 0 },
+          { "node": "CRM: filtro classificação", "type": "main", "index": 0 }
         ]
       ]
     },
     "Agrupar Leads": {
       "main": [[{ "node": "Enviar WhatsApp (Lote)", "type": "main", "index": 0 }]]
+    },
+    "CRM: filtro classificação": {
+      "main": [[{ "node": "CRM: mapear payload", "type": "main", "index": 0 }]]
+    },
+    "CRM: mapear payload": {
+      "main": [[{ "node": "CRM: ingest lead", "type": "main", "index": 0 }]]
     }
   },
   "settings": { "executionOrder": "v1" }

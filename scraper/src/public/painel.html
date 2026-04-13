@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bookou — Painel de Disparos</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0a0a0a; color: #e0e0e0; }
+    .header { background: #111; border-bottom: 2px solid #d4af37; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .header h1 { font-size: 18px; color: #d4af37; font-weight: 700; }
+    .header nav { display: flex; gap: 6px; }
+    .header nav a { color: #888; text-decoration: none; font-size: 12px; padding: 6px 14px; border-radius: 6px; transition: all 0.2s; }
+    .header nav a:hover, .header nav a.active { color: #d4af37; background: #d4af3712; }
+    .tab { display: none; padding: 20px 24px; }
+    .tab.active { display: block; }
+
+    /* Cards de stats */
+    .stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .stat { background: #131313; border: 1px solid #222; border-radius: 10px; padding: 16px; text-align: center; }
+    .stat .num { font-size: 28px; font-weight: 800; color: #d4af37; }
+    .stat .lbl { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+    .stat.green .num { color: #25D366; }
+    .stat.red .num { color: #e74c3c; }
+    .stat.blue .num { color: #3498db; }
+    .stat.orange .num { color: #f39c12; }
+
+    /* Controles de disparo */
+    .control-panel { background: #131313; border: 1px solid #222; border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+    .control-panel h3 { color: #d4af37; font-size: 14px; margin-bottom: 16px; }
+    .control-row { display: flex; gap: 16px; align-items: end; flex-wrap: wrap; }
+    .control-field { display: flex; flex-direction: column; gap: 4px; }
+    .control-field label { font-size: 11px; color: #666; text-transform: uppercase; }
+    .control-field input, .control-field select { background: #0a0a0a; border: 1px solid #333; color: #eee; padding: 10px 14px; border-radius: 8px; font-size: 14px; width: 140px; }
+    .control-field input:focus, .control-field select:focus { border-color: #d4af37; outline: none; }
+    .btn { padding: 10px 24px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 700; transition: all 0.2s; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-gold { background: #d4af37; color: #111; }
+    .btn-gold:hover:not(:disabled) { background: #e5c348; }
+    .btn-red { background: #e74c3c22; color: #e74c3c; border: 1px solid #e74c3c33; }
+    .btn-green { background: #25D36622; color: #25D366; border: 1px solid #25D36633; }
+    .btn-outline { background: transparent; border: 1px solid #333; color: #aaa; }
+
+    /* Status bar */
+    .status-bar { background: #0e0e0e; border: 1px solid #222; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; font-size: 12px; color: #888; display: flex; justify-content: space-between; align-items: center; }
+    .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+    .status-dot.green { background: #25D366; }
+    .status-dot.red { background: #e74c3c; }
+    .status-dot.yellow { background: #f39c12; }
+
+    /* Tabela */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { background: #131313; color: #666; text-transform: uppercase; font-size: 10px; letter-spacing: 0.5px; padding: 10px 12px; text-align: left; position: sticky; top: 0; }
+    td { padding: 10px 12px; border-bottom: 1px solid #1a1a1a; color: #ccc; }
+    tr:hover td { background: #131313; }
+    .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; }
+    .badge-contacted { background: #3498db22; color: #3498db; }
+    .badge-engaged { background: #f39c1222; color: #f39c12; }
+    .badge-interested { background: #2ecc7122; color: #2ecc71; }
+    .badge-human { background: #d4af3722; color: #d4af37; }
+    .badge-opted_out { background: #e74c3c22; color: #e74c3c; }
+    .badge-quente { background: #e74c3c22; color: #e74c3c; }
+    .badge-morno { background: #f39c1222; color: #f39c12; }
+
+    /* Log de atividade */
+    .log { background: #0e0e0e; border: 1px solid #222; border-radius: 8px; padding: 16px; max-height: 300px; overflow-y: auto; font-family: 'SF Mono', monospace; font-size: 11px; line-height: 1.8; color: #666; }
+    .log .ok { color: #25D366; }
+    .log .err { color: #e74c3c; }
+    .log .info { color: #3498db; }
+    .log .warn { color: #f39c12; }
+
+    /* Conversa detail */
+    .convo-detail { background: #131313; border: 1px solid #222; border-radius: 12px; padding: 20px; margin-top: 16px; display: none; }
+    .msg-bubble { max-width: 70%; padding: 10px 14px; border-radius: 12px; margin-bottom: 8px; font-size: 13px; line-height: 1.5; }
+    .msg-out { background: #d4af3718; color: #d4af37; margin-left: auto; border-bottom-right-radius: 4px; }
+    .msg-in { background: #1a1a1a; color: #eee; border-bottom-left-radius: 4px; }
+    .msg-time { font-size: 9px; color: #444; margin-top: 2px; }
+    .msg-container { display: flex; flex-direction: column; }
+
+    @media (max-width: 768px) {
+      .control-row { flex-direction: column; }
+      .control-field input { width: 100%; }
+      .stats-row { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Bookou Painel de Disparos</h1>
+  <nav>
+    <a href="#" class="active" onclick="showTab('disparos', this)">Disparos</a>
+    <a href="#" onclick="showTab('conversas', this)">Conversas</a>
+    <a href="#" onclick="showTab('followups', this)">Follow-ups</a>
+    <a href="/" onclick="event.preventDefault(); window.open('/')">Leads</a>
+  </nav>
+</div>
+
+<!-- TAB: DISPAROS -->
+<div class="tab active" id="tab-disparos">
+  <div class="status-bar" id="statusBar">Carregando...</div>
+
+  <div class="stats-row" id="dispStats"></div>
+
+  <div class="control-panel">
+    <h3>Disparar Mensagens</h3>
+    <div class="control-row">
+      <div class="control-field">
+        <label>Quantidade</label>
+        <input type="number" id="sendQty" value="5" min="1" max="50">
+      </div>
+      <div class="control-field">
+        <label>Filtro</label>
+        <select id="sendFilter">
+          <option value="true">Apenas Quentes</option>
+          <option value="false">Todos com WhatsApp</option>
+        </select>
+      </div>
+      <button class="btn btn-gold" id="sendBtn" onclick="startSend()">Disparar</button>
+      <button class="btn btn-outline" onclick="loadAll()">Atualizar</button>
+    </div>
+  </div>
+
+  <h3 style="color:#d4af37; font-size:13px; margin-bottom:12px;">Conversas Recentes</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Lead</th><th>Telefone</th><th>Estágio</th><th>Última msg</th><th>Ações</th></tr></thead>
+      <tbody id="dispConvoBody"></tbody>
+    </table>
+  </div>
+
+  <h3 style="color:#d4af37; font-size:13px; margin: 20px 0 12px;">Log de Atividade</h3>
+  <div class="log" id="sendLog">Pronto para disparar...</div>
+</div>
+
+<!-- TAB: CONVERSAS -->
+<div class="tab" id="tab-conversas">
+  <div class="stats-row" id="convoStats"></div>
+
+  <div style="display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap;">
+    <select id="convoFilter" onchange="loadConversations()" style="background:#131313;border:1px solid #333;color:#eee;padding:8px 12px;border-radius:6px;font-size:12px;">
+      <option value="">Todos os estágios</option>
+      <option value="contacted">Contatados</option>
+      <option value="engaged">Engajados</option>
+      <option value="interested">Interessados</option>
+      <option value="objection">Em objeção</option>
+      <option value="human">Aguardando humano</option>
+      <option value="opted_out">Opt-out</option>
+    </select>
+  </div>
+
+  <div class="table-wrap">
+    <table id="convoTable">
+      <thead><tr><th>Telefone</th><th>Nome</th><th>Estágio</th><th>Última msg</th><th>Ações</th></tr></thead>
+      <tbody id="convoBody"></tbody>
+    </table>
+  </div>
+
+  <div class="convo-detail" id="convoDetail">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h3 style="color:#d4af37;font-size:14px;" id="convoName">Conversa</h3>
+      <div style="display:flex;gap:8px;">
+        <select id="stageSelect" style="background:#0a0a0a;border:1px solid #333;color:#eee;padding:6px 10px;border-radius:6px;font-size:11px;">
+          <option value="contacted">Contatado</option>
+          <option value="engaged">Engajado</option>
+          <option value="interested">Interessado</option>
+          <option value="human">Humano</option>
+          <option value="won">Ganho</option>
+          <option value="lost">Perdido</option>
+        </select>
+        <button class="btn btn-outline" onclick="changeStage()" style="font-size:11px;padding:6px 12px;">Alterar</button>
+        <button class="btn btn-outline" onclick="closeDetail()" style="font-size:11px;padding:6px 12px;">Fechar</button>
+      </div>
+    </div>
+    <div class="msg-container" id="convoMessages"></div>
+  </div>
+</div>
+
+<!-- TAB: FOLLOW-UPS -->
+<div class="tab" id="tab-followups">
+  <div class="stats-row" id="fuStats"></div>
+
+  <div class="control-panel">
+    <h3>Follow-ups Pendentes</h3>
+    <div class="control-row">
+      <button class="btn btn-gold" onclick="loadFollowups()">Atualizar</button>
+      <button class="btn btn-green" id="fuSendAllBtn" onclick="sendAllFollowups()">Enviar Todos Pendentes</button>
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Telefone</th><th>Nome</th><th>Dias desde contato</th><th>Follow-up #</th><th>Ações</th></tr></thead>
+      <tbody id="fuBody"></tbody>
+    </table>
+  </div>
+  <div class="log" id="fuLog" style="margin-top:16px;">Pronto...</div>
+</div>
+
+<script>
+const API = '';
+let currentConvoPhone = null;
+
+// ═══ NAVEGAÇÃO ═══
+function showTab(tab, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('nav a').forEach(a => a.classList.remove('active'));
+  document.getElementById('tab-' + tab).classList.add('active');
+  el.classList.add('active');
+  if (tab === 'conversas') loadConversations();
+  if (tab === 'followups') loadFollowups();
+}
+
+// ═══ DISPAROS ═══
+async function loadAll() {
+  try {
+    const [wa, rate, convo] = await Promise.all([
+      fetch(API + '/api/whatsapp/status').then(r => r.json()),
+      fetch(API + '/api/rate-limit').then(r => r.json()),
+      fetch(API + '/api/conversations/stats').then(r => r.json()),
+    ]);
+
+    const connected = wa.connected;
+    const bar = document.getElementById('statusBar');
+    bar.innerHTML = `
+      <span><span class="status-dot ${connected ? 'green' : 'red'}"></span>WhatsApp: ${connected ? 'Conectado' : 'Desconectado'}</span>
+      <span>Warm-up: Dia ${rate.warmupDay} | Limite: ${rate.dailyLimit}/dia | Delay: ${rate.delayRange}</span>
+    `;
+
+    document.getElementById('dispStats').innerHTML = `
+      <div class="stat green"><div class="num">${rate.today?.sent || 0}</div><div class="lbl">Enviados hoje</div></div>
+      <div class="stat"><div class="num">${rate.today?.limit - (rate.today?.sent || 0)}</div><div class="lbl">Restantes</div></div>
+      <div class="stat blue"><div class="num">${convo.total || 0}</div><div class="lbl">Conversas</div></div>
+      <div class="stat orange"><div class="num">${convo.stages?.engaged || 0}</div><div class="lbl">Engajados</div></div>
+      <div class="stat" style="border-color:#25D36633"><div class="num" style="color:#25D366">${convo.stages?.interested || 0}</div><div class="lbl">Interessados</div></div>
+      <div class="stat red"><div class="num">${convo.stages?.human || 0}</div><div class="lbl">Aguard. Humano</div></div>
+    `;
+
+    document.getElementById('sendBtn').disabled = !connected || (rate.today?.sent >= rate.today?.limit);
+
+    // Carregar conversas na aba disparos
+    const convos = await fetch(API + '/api/conversations').then(r => r.json());
+    const body = document.getElementById('dispConvoBody');
+    const list = (convos.conversations || []).sort((a,b) => new Date(b.lastMessageAt) - new Date(a.lastMessageAt));
+    body.innerHTML = list.map(c => {
+      const time = c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString('pt-BR') : '-';
+      return `<tr>
+        <td><strong>${c.leadName || '-'}</strong></td>
+        <td>${c.phone}</td>
+        <td><span class="badge badge-${c.stage}">${c.stage}${c.optedOut ? ' (bloqueado)' : ''}${c.humanHandoff ? ' (humano)' : ''}</span></td>
+        <td>${time}</td>
+        <td>
+          <button class="btn btn-outline" style="font-size:10px;padding:4px 10px;" onclick="showTab('conversas',document.querySelector('nav a:nth-child(2)')); setTimeout(()=>openConvo('${c.phone}'),300);">Ver chat</button>
+          <a href="https://wa.me/${c.phone}" target="_blank" class="btn btn-green" style="font-size:10px;padding:4px 10px;text-decoration:none;">WhatsApp</a>
+        </td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="5" style="text-align:center;color:#444;">Nenhuma conversa ainda</td></tr>';
+  } catch (e) {
+    document.getElementById('statusBar').innerHTML = '<span class="status-dot red"></span>Erro ao conectar API';
+  }
+}
+
+async function startSend() {
+  const qty = parseInt(document.getElementById('sendQty').value);
+  const onlyQuente = document.getElementById('sendFilter').value === 'true';
+  const log = document.getElementById('sendLog');
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+
+  log.innerHTML = '<span class="info">[' + new Date().toLocaleTimeString() + '] Carregando leads...</span>\n';
+
+  try {
+    const leadsRes = await fetch(API + '/api/leads');
+    const leadsData = await leadsRes.json();
+
+    log.innerHTML += '<span class="info">[' + new Date().toLocaleTimeString() + '] ' + leadsData.leads.length + ' leads carregados. Enviando batch...</span>\n';
+
+    const res = await fetch(API + '/api/whatsapp/send-batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leads: leadsData.leads, onlyQuente, maxSends: qty }),
+    });
+    const result = await res.json();
+
+    if (res.status === 429) {
+      log.innerHTML += '<span class="warn">[' + new Date().toLocaleTimeString() + '] ' + result.error + '</span>\n';
+    } else {
+      log.innerHTML += '<span class="ok">[' + new Date().toLocaleTimeString() + '] ' + result.message + '</span>\n';
+      log.innerHTML += '<span class="info">Leads na fila: ' + result.queued + ' | Total elegíveis: ' + result.total_elegiveis + '</span>\n';
+      log.innerHTML += '<span class="info">Envio em andamento com delays anti-ban (45-90s entre cada). Acompanhe nas Conversas.</span>\n';
+    }
+  } catch (e) {
+    log.innerHTML += '<span class="err">[' + new Date().toLocaleTimeString() + '] Erro: ' + e.message + '</span>\n';
+  }
+
+  setTimeout(() => { btn.disabled = false; loadAll(); }, 5000);
+}
+
+// ═══ CONVERSAS ═══
+async function loadConversations() {
+  try {
+    const stage = document.getElementById('convoFilter')?.value || '';
+    const url = stage ? API + '/api/conversations?stage=' + stage : API + '/api/conversations';
+    const data = await fetch(url).then(r => r.json());
+
+    document.getElementById('convoStats').innerHTML = `
+      <div class="stat"><div class="num">${data.stats?.total || 0}</div><div class="lbl">Total</div></div>
+      <div class="stat blue"><div class="num">${data.stats?.stages?.contacted || 0}</div><div class="lbl">Contatados</div></div>
+      <div class="stat orange"><div class="num">${data.stats?.stages?.engaged || 0}</div><div class="lbl">Engajados</div></div>
+      <div class="stat green"><div class="num">${data.stats?.stages?.interested || 0}</div><div class="lbl">Interessados</div></div>
+      <div class="stat" style="border-color:#d4af3733"><div class="num" style="color:#d4af37">${data.stats?.stages?.human || 0}</div><div class="lbl">Aguard. Humano</div></div>
+      <div class="stat red"><div class="num">${data.stats?.optedOut || 0}</div><div class="lbl">Opt-out</div></div>
+    `;
+
+    const body = document.getElementById('convoBody');
+    body.innerHTML = (data.conversations || []).map(c => `
+      <tr>
+        <td>${c.phone}</td>
+        <td>${c.leadName || '-'}</td>
+        <td><span class="badge badge-${c.stage}">${c.stage}</span></td>
+        <td>${c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString('pt-BR') : '-'}</td>
+        <td>
+          <button class="btn btn-outline" style="font-size:10px;padding:4px 10px;" onclick="openConvo('${c.phone}')">Ver</button>
+          <a href="https://wa.me/${c.phone}" target="_blank" class="btn btn-green" style="font-size:10px;padding:4px 10px;text-decoration:none;">WhatsApp</a>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="text-align:center;color:#444;">Nenhuma conversa</td></tr>';
+  } catch (e) {
+    document.getElementById('convoBody').innerHTML = '<tr><td colspan="5" style="color:#e74c3c;">Erro ao carregar</td></tr>';
+  }
+}
+
+async function openConvo(phone) {
+  currentConvoPhone = phone;
+  const detail = document.getElementById('convoDetail');
+  detail.style.display = 'block';
+
+  try {
+    const convo = await fetch(API + '/api/conversations/' + phone).then(r => r.json());
+    document.getElementById('convoName').textContent = (convo.leadName || phone) + ' — ' + phone;
+    document.getElementById('stageSelect').value = convo.stage;
+
+    const msgs = document.getElementById('convoMessages');
+    msgs.innerHTML = (convo.messages || []).map(m => `
+      <div class="msg-bubble msg-${m.direction === 'in' ? 'in' : 'out'}">
+        ${m.text}
+        <div class="msg-time">${m.direction === 'in' ? 'Lead' : 'Bot'} — ${new Date(m.timestamp).toLocaleString('pt-BR')}</div>
+      </div>
+    `).join('') || '<p style="color:#444;text-align:center;">Sem mensagens</p>';
+    msgs.scrollTop = msgs.scrollHeight;
+  } catch (e) {
+    document.getElementById('convoMessages').innerHTML = '<p style="color:#e74c3c;">Erro ao carregar conversa</p>';
+  }
+}
+
+function closeDetail() {
+  document.getElementById('convoDetail').style.display = 'none';
+  currentConvoPhone = null;
+}
+
+async function changeStage() {
+  if (!currentConvoPhone) return;
+  const stage = document.getElementById('stageSelect').value;
+  await fetch(API + '/api/conversations/' + currentConvoPhone + '/stage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ stage }),
+  });
+  loadConversations();
+  openConvo(currentConvoPhone);
+}
+
+// ═══ FOLLOW-UPS ═══
+async function loadFollowups() {
+  try {
+    const data = await fetch(API + '/api/followups/pending').then(r => r.json());
+
+    document.getElementById('fuStats').innerHTML = `
+      <div class="stat orange"><div class="num">${data.total}</div><div class="lbl">Pendentes</div></div>
+      <div class="stat"><div class="num">${data.rateLimit?.today?.sent || 0}/${data.rateLimit?.dailyLimit || 10}</div><div class="lbl">Enviados/Limite</div></div>
+    `;
+
+    document.getElementById('fuSendAllBtn').disabled = data.total === 0;
+
+    const body = document.getElementById('fuBody');
+    body.innerHTML = (data.pending || []).map(p => `
+      <tr>
+        <td>${p.phone}</td>
+        <td>${p.leadName || '-'}</td>
+        <td>${p.daysSinceContact} dias</td>
+        <td>Follow-up #${p.followupNumber}</td>
+        <td><button class="btn btn-green" style="font-size:10px;padding:4px 10px;" onclick="sendFollowup('${p.phone}')">Enviar</button></td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" style="text-align:center;color:#444;">Nenhum follow-up pendente</td></tr>';
+  } catch (e) {
+    document.getElementById('fuBody').innerHTML = '<tr><td colspan="5" style="color:#e74c3c;">Erro ao carregar</td></tr>';
+  }
+}
+
+async function sendFollowup(phone) {
+  const log = document.getElementById('fuLog');
+  log.innerHTML += '<span class="info">[' + new Date().toLocaleTimeString() + '] Enviando follow-up para ' + phone + '...</span>\n';
+  try {
+    const res = await fetch(API + '/api/followups/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      log.innerHTML += '<span class="ok">[' + new Date().toLocaleTimeString() + '] Follow-up #' + data.followupNumber + ' enviado!</span>\n';
+    } else {
+      log.innerHTML += '<span class="err">[' + new Date().toLocaleTimeString() + '] ' + (data.error || 'Erro') + '</span>\n';
+    }
+  } catch (e) {
+    log.innerHTML += '<span class="err">[' + new Date().toLocaleTimeString() + '] ' + e.message + '</span>\n';
+  }
+  setTimeout(loadFollowups, 2000);
+}
+
+async function sendAllFollowups() {
+  const data = await fetch(API + '/api/followups/pending').then(r => r.json());
+  const log = document.getElementById('fuLog');
+  log.innerHTML = '<span class="info">[' + new Date().toLocaleTimeString() + '] Enviando ' + data.total + ' follow-ups...</span>\n';
+
+  for (const p of (data.pending || [])) {
+    await sendFollowup(p.phone);
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  log.innerHTML += '<span class="ok">[' + new Date().toLocaleTimeString() + '] Concluído!</span>\n';
+}
+
+// ═══ INIT ═══
+loadAll();
+setInterval(loadAll, 30000);
+</script>
+</body>
+</html>

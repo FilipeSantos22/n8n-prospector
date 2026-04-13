@@ -122,6 +122,22 @@ Para cada lead qualificado, gera automaticamente:
 
 - **JSON** em `/home/node/exports/leads-data.json` — alimenta o dashboard web
 - **Excel** com 3 abas: Leads Qualificados (ordenados por score, coloridos por classificação), Mensagens (prontas para copiar), Resumo
+- **CRM** — leads das classificações configuradas em `CRM_INGEST_CLASSES` (default `QUENTE,MORNO`) são enviados ao `sistema-crm` via `POST /api/v1/crm/leads/ingest`, criando Contact + Deal com idempotência por telefone
+
+---
+
+## Integração CRM (sistema-crm)
+
+O workflow `workflow-lead-prospector.json` tem um ramo dedicado que, após `Tem Contato?`, filtra por classificação e envia os leads para a API do CRM em produção. O envio só acontece se as 3 variáveis abaixo estiverem preenchidas:
+
+```env
+CRM_API_URL=https://crm.dosantos.com.br
+CRM_INGEST_API_KEY=<API key gerada no CRM>
+CRM_TENANT_ID=<UUID do tenant>
+CRM_INGEST_CLASSES=QUENTE,MORNO    # opcional, default QUENTE,MORNO
+```
+
+O endpoint é autenticado por API key (header `x-api-key`) e tenant explícito (header `x-tenant-id`) — não usa JWT. Duplicatas por telefone fazem merge (atualiza tags/score/temperature, não cria Deal novo se já existe Deal aberto).
 
 ---
 

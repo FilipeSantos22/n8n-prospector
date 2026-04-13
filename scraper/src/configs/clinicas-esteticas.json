@@ -5,10 +5,26 @@
     "nome": "Bookou",
     "descricao": "agendamento, financeiro, comissoes, lembretes WhatsApp",
     "planos": [
-      { "nome": "Start", "preco": "R$79,90/mes" },
-      { "nome": "Profissional", "preco": "R$149,90/mes" }
+      { "nome": "Start", "preco": "R$80/mes" },
+      { "nome": "Profissional", "preco": "R$115/mes" }
     ],
-    "trial": "14 dias gratis"
+    "trial": "14 dias gratis",
+    "precoStart": "R$80"
+  },
+  "respostas": {
+    "engaged": "Opa {nomeSimples}, que bom! O Bookou e um sistema de agendamento online pras suas clientes marcarem direto pelo celular, com lembretes automaticos por WhatsApp pra reduzir faltas. Quer saber mais?",
+    "interested": "Massa! Da uma olhada no site bookou.com.br, la voce ve os planos e ja consegue criar a conta do seu studio. Se tiver qualquer duvida, me chama aqui que te ajudo!",
+    "interested_confirm": "Isso ai, {nomeSimples}! Acessa la o bookou.com.br e qualquer duvida me chama aqui. Valeu!",
+    "objection_price": "Entendo! O plano começa em {precoStart}/mes, e com poucos agendamentos online a mais por mes ja se paga. Quer que o pessoal te mostre os numeros?",
+    "objection_doubt": "Funciona assim: suas clientes acessam uma pagina do seu studio, escolhem o profissional, o procedimento e o horario disponivel. O sistema manda lembrete automatico por WhatsApp. Voce controla agenda, financeiro e comissoes pelo celular. Quer ver na pratica?",
+    "objection_general": "Tranquilo! Se quiser, posso pedir pro time te mostrar rapidinho como funciona, sem compromisso. O que acha?",
+    "escalate": "Entendo! Vou passar pra alguem do time que consegue te explicar melhor. Um momento!",
+    "opted_out": "Sem problema! Desculpa qualquer incomodo. Se precisar, e so mandar mensagem. Valeu!",
+    "human": "Beleza! Ja vou passar pra alguem do time te atender. Em instantes entram em contato!",
+    "fallback": "Desculpa, nao entendi direito. Voce gostaria de conhecer o sistema de agendamento? Me responde SIM que te explico rapidinho",
+    "followup_1": "E ai {nomeSimples}, tudo certo? Vi que nao consegui falar com voce. Se tiver interesse no sistema de agendamento, e so responder aqui!",
+    "followup_2": "Oi {nomeSimples}! Queria te mostrar como algumas clinicas de estetica aqui da regiao tao usando agendamento online pra organizar a agenda e reduzir faltas. Quer dar uma olhada?",
+    "followup_3": "Fala {nomeSimples}, ultima vez que te mando mensagem! Se quiser conhecer o Bookou e so responder, senao sem problema nenhum. Abraco!"
   },
   "busca": {
     "queries": ["clinica de estetica", "estetica facial", "estetica corporal", "centro estetico", "studio de estetica", "clinica de beleza"],

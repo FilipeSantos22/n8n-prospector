@@ -1,0 +1,94 @@
+{
+  "name": "Bookou - Follow-up Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "field": "cronExpression", "expression": "0 10 * * 1-6" }]
+        }
+      },
+      "id": "cron",
+      "name": "Diário 10h (Seg-Sáb)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "http://scraper:3099/api/followups/pending",
+        "options": { "timeout": 30000 }
+      },
+      "id": "get-pending",
+      "name": "Buscar Pendentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "pending",
+        "options": {}
+      },
+      "id": "split",
+      "name": "Separar Leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://scraper:3099/api/followups/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { phone: $json.phone } }}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "send-followup",
+      "name": "Enviar Follow-up",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 300]
+    },
+    {
+      "parameters": {
+        "time": "={{ Math.floor(60 + Math.random() * 30) }}",
+        "unit": "seconds"
+      },
+      "id": "wait",
+      "name": "Esperar 60-90s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [920, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst sent = items.filter(i => i.json.success).length;\nconst failed = items.length - sent;\nreturn [{ json: { mensagem: `Follow-up: ${sent} enviados, ${failed} falhas` } }];"
+      },
+      "id": "summary",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [700, 180]
+    }
+  ],
+  "connections": {
+    "Diário 10h (Seg-Sáb)": {
+      "main": [[{ "node": "Buscar Pendentes", "type": "main", "index": 0 }]]
+    },
+    "Buscar Pendentes": {
+      "main": [[{ "node": "Separar Leads", "type": "main", "index": 0 }]]
+    },
+    "Separar Leads": {
+      "main": [[{ "node": "Enviar Follow-up", "type": "main", "index": 0 }]]
+    },
+    "Enviar Follow-up": {
+      "main": [[
+        { "node": "Esperar 60-90s", "type": "main", "index": 0 },
+        { "node": "Resumo", "type": "main", "index": 0 }
+      ]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}

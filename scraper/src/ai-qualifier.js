@@ -31,6 +31,7 @@ async function qualifyWithAI(lead, config = null) {
 
   try {
     const prompt = buildPrompt(lead, config);
+    const systemMsg = 'Consultor B2B qualificação de leads. Responda APENAS JSON válido, sem markdown, sem explicações.';
 
     let text;
 
@@ -41,10 +42,10 @@ async function qualifyWithAI(lead, config = null) {
       // ── Groq (Llama 3.3 70B — gratuito) ──
       const { data } = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: 'llama-3.3-70b-versatile',
-        max_tokens: 700,
-        temperature: 0.3,
+        max_tokens: 400,
+        temperature: 0.2,
         messages: [
-          { role: 'system', content: 'Você é um consultor B2B especialista em qualificação de leads. Responda APENAS com JSON válido, sem markdown.' },
+          { role: 'system', content: systemMsg },
           { role: 'user', content: prompt },
         ],
       }, {
@@ -59,7 +60,8 @@ async function qualifyWithAI(lead, config = null) {
       // ── Claude (Anthropic) ──
       const { data } = await axios.post('https://api.anthropic.com/v1/messages', {
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 700,
+        max_tokens: 400,
+        system: systemMsg,
         messages: [{ role: 'user', content: prompt }],
       }, {
         headers: {
@@ -81,71 +83,57 @@ async function qualifyWithAI(lead, config = null) {
 }
 
 function buildPrompt(lead, config = null) {
-  // Reviews negativos (nota <= 3) em texto completo, até 5
-  const negativeReviews = (lead.reviews || [])
-    .filter(r => r.nota <= 3)
-    .slice(0, 5)
-    .map(r => `${r.nota}/5: "${(r.texto || '').substring(0, 200)}"`)
-    .join('\n');
-
-  // Completar com reviews gerais se não houver negativos suficientes
-  const allReviews = negativeReviews || (lead.reviews || [])
-    .slice(0, 2)
-    .map(r => `${r.nota}/5: "${(r.texto || '').substring(0, 80)}"`)
-    .join('\n');
-
-  const concorrente = lead.websiteAnalysis?.usaConcorrente
-    ? lead.websiteAnalysis.competitorsFound.join(', ')
-    : 'não';
-
   const contexto = config
     ? config.qualificacao.promptContexto
     : 'Consultor B2B SaaS barbearias. Produto: Bookou (agendamento, financeiro, comissões, lembretes WhatsApp). Start R$79,90/mês, Profissional R$149,90/mês.';
 
-  // Dados extras por fonte
-  const extras = [];
-  if (lead.cnpj) extras.push(`CNPJ: ${lead.cnpj} | Porte: ${lead.porte || '?'}`);
-  if (lead.abertura) extras.push(`Aberto desde: ${lead.abertura}`);
-  if (lead.instagram?.seguidores) extras.push(`Instagram: ${lead.instagram.seguidores} seguidores, ${lead.instagram.posts || '?'} posts`);
-  if (lead.instagram?.isBusiness) extras.push('Conta business no Instagram');
-  if (lead.instagram?.temAgendamentoOnline) extras.push('Já tem link de agendamento no Instagram');
-  if (lead.instagram?.temWhatsappLink) extras.push('Usa WhatsApp Business (link na bio)');
-  const sources = lead.sources || [lead.source];
-  if (sources.length > 1) extras.push(`Encontrado em ${sources.length} fontes: ${sources.join(', ')}`);
-
-  // Análise de reviews enriquecida
+  // Usar painSummary se disponível; senão, pegar até 3 reviews negativos resumidos
   const reviewAnalysis = lead.reviewAnalysis || {};
-  if (reviewAnalysis.ownerResponds) extras.push('Dono responde avaliações no Google');
-  if (reviewAnalysis.ownerMentionsScheduling) extras.push('GOLD: Dono menciona agendamento manual nas respostas');
-  if (reviewAnalysis.reviewVelocity > 1.5) extras.push(`Crescimento rápido: ${reviewAnalysis.reviewVelocity.toFixed(1)} avaliações/mês`);
-  if (reviewAnalysis.bimodalDistribution) extras.push('Reviews bimodais: clientes divididos (caos operacional)');
-  if (reviewAnalysis.noShowPain) extras.push('Dor de no-show mencionada nas reviews');
+  let reviewContext = '';
+  if (reviewAnalysis.painSummary) {
+    reviewContext = `Dores: ${reviewAnalysis.painSummary}`;
+  } else {
+    const negReviews = (lead.reviews || [])
+      .filter(r => r.nota <= 3)
+      .slice(0, 3)
+      .map(r => `${r.nota}/5: "${(r.texto || '').substring(0, 100)}"`)
+      .join(' | ');
+    if (negReviews) reviewContext = `Reviews: ${negReviews}`;
+  }
 
-  // Maturidade digital
+  const concorrente = lead.websiteAnalysis?.usaConcorrente
+    ? lead.websiteAnalysis.competitorsFound.join(', ')
+    : '';
+
+  // Sinais compactos — só flags relevantes, uma linha
+  const flags = [];
+  if (!lead.website) flags.push('SEM_SITE');
+  if (concorrente) flags.push(`CONCORRENTE:${concorrente}`);
+  if (lead.instagram?.temAgendamentoOnline) flags.push('IG_AGENDAMENTO');
+  if (lead.instagram?.seguidores) flags.push(`IG:${lead.instagram.seguidores}`);
+  if (lead.instagram?.isBusiness) flags.push('IG_BIZ');
+  if (lead.whatsapp) flags.push('WHATSAPP');
+  if (lead.cnpj) flags.push(`CNPJ:${lead.porte || '?'}`);
+  if (reviewAnalysis.ownerMentionsScheduling) flags.push('DONO_AGENDA_MANUAL');
+  if (reviewAnalysis.noShowPain) flags.push('NO_SHOW');
+  if (reviewAnalysis.bimodalDistribution) flags.push('BIMODAL');
+  if (reviewAnalysis.reviewVelocity > 1.5) flags.push(`VEL:${reviewAnalysis.reviewVelocity.toFixed(1)}/m`);
+  if (reviewAnalysis.ownerResponds) flags.push('DONO_RESPONDE');
   const marketingStatus = lead.marketingStatus || {};
-  if (marketingStatus.maturityLevel !== undefined) extras.push(`Maturidade digital: nível ${marketingStatus.maturityLevel}/4`);
-  if (marketingStatus.channelFragmentation) extras.push('Canais fragmentados (vários sem integração)');
-
-  // Website analytics
+  if (marketingStatus.maturityLevel !== undefined) flags.push(`MAT:${marketingStatus.maturityLevel}/4`);
+  if (marketingStatus.channelFragmentation) flags.push('FRAG_CANAIS');
   const websiteAnalysis = lead.websiteAnalysis || {};
-  if (websiteAnalysis.hasGoogleAnalytics || websiteAnalysis.hasFacebookPixel) extras.push('Investe em analytics digital');
-  if (websiteAnalysis.cms === 'wix' || websiteAnalysis.cms === 'squarespace') extras.push(`CMS: ${websiteAnalysis.cms} (já paga SaaS)`);
-
-  // Estimativa de equipe
+  if (websiteAnalysis.hasGoogleAnalytics || websiteAnalysis.hasFacebookPixel) flags.push('ANALYTICS');
+  if (websiteAnalysis.cms) flags.push(`CMS:${websiteAnalysis.cms}`);
   const staffEstimate = estimateStaff(lead);
-  if (staffEstimate) extras.push(`Estimativa equipe: ${staffEstimate}`);
+  if (staffEstimate) flags.push(`EQUIPE:${staffEstimate}`);
+  if (lead.abertura) flags.push(`DESDE:${lead.abertura}`);
 
   return `${contexto}
-
-LEAD: ${lead.nome} | ${lead.cidade || ''}
-Site: ${lead.website || 'NÃO TEM'} | Instagram: ${lead.instagram?.url || 'não'} | WhatsApp: ${lead.whatsapp ? 'sim' : 'não'}
-Rating: ${lead.rating}/5 (${lead.totalAvaliacoes} avaliações) | Concorrente: ${concorrente}
-${extras.length > 0 ? extras.join('\n') : ''}
-${lead.reviewAnalysis?.painSummary ? `Dores: ${lead.reviewAnalysis.painSummary}` : ''}
-${allReviews ? `Reviews negativos:\n${allReviews}` : ''}
-
-JSON (sem markdown):
-{"score":<0-100>,"classificacao":"<QUENTE|MORNO|FRIO>","perfil":"<1 frase>","dores_provaveis":["<d1>","<d2>"],"argumento_principal":"<1 frase>","plano_recomendado":"<start|profissional>","mensagem_whatsapp":"<máx 280 chars, personalizada>","mensagem_instagram":"<máx 180 chars>","mensagem_followup":"<máx 150 chars>","melhor_horario_contato":"<quando abordar>","risco":"<baixo|medio|alto>"}`;
+${lead.nome}|${lead.cidade || ''}|${lead.rating}/5(${lead.totalAvaliacoes}av)|${lead.website || 'sem-site'}
+${flags.join(' ')}
+${reviewContext}
+JSON:{"score":<0-100>,"classificacao":"QUENTE|MORNO|FRIO","perfil":"1frase","dores_provaveis":["d1","d2"],"argumento_principal":"1frase","plano_recomendado":"start|profissional","mensagem_whatsapp":"max280ch","mensagem_instagram":"max180ch","mensagem_followup":"max150ch","melhor_horario_contato":"quando","risco":"baixo|medio|alto"}`;
 }
 
 function parseAIResponse(text, lead, config = null) {

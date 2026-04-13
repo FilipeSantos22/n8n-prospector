@@ -30,6 +30,12 @@ const { deduplicateLeads } = require('./utils/dedup');
 // Qualifier
 const { qualifyWithAI } = require('./ai-qualifier');
 
+// Chatbot
+const conversationStore = require('./chatbot/conversation-store');
+const flowEngine = require('./chatbot/flow-engine');
+const rateLimiter = require('./chatbot/rate-limiter');
+const { notifyHumanHandoff } = require('./chatbot/handoff');
+
 // Infrastructure
 const { getStorage } = require('./storage');
 const { getCache } = require('./cache');
@@ -41,9 +47,22 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Autenticação por API key (se configurada)
+app.use((req, res, next) => {
+  if (!API_KEY) return next(); // sem key = sem auth (dev mode)
+  if (req.path === '/health') return next(); // health sempre aberto
+  const provided = req.headers['x-api-key'] || req.query.apiKey;
+  if (provided !== API_KEY) {
+    return res.status(401).json({ error: 'API key inválida ou ausente. Envie header x-api-key.' });
+  }
+  next();
+});
+
 const PORT = process.env.PORT || 3099;
 const EXPORTS_DIR = process.env.EXPORTS_DIR || '/home/node/exports';
+const LEADS_FILE = path.join(EXPORTS_DIR, 'leads-data.json');
 const ENRICH_CONCURRENCY = parseInt(process.env.ENRICH_CONCURRENCY || '3');
+const API_KEY = process.env.SCRAPER_API_KEY || '';
 
 // ════════════════════════════════════════════════════
 // SEGMENTOS — Listar configs disponíveis
@@ -1018,15 +1037,25 @@ app.post('/api/whatsapp/send', async (req, res) => {
 
 app.post('/api/whatsapp/send-batch', async (req, res) => {
   try {
-    const { leads, delayMs = 20000, onlyQuente = true, maxSends = 2 } = req.body;
+    const { leads, onlyQuente = true, maxSends = 5 } = req.body;
     if (!leads || !Array.isArray(leads)) {
       return res.status(400).json({ error: 'leads é obrigatório (array)' });
     }
 
+    // Rate limit check
+    const rateCheck = rateLimiter.canSendNow();
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: rateCheck.reason, rateLimit: rateLimiter.getStats() });
+    }
+
+    // Filtrar e limitar pelo rate-limiter
+    const effectiveMax = Math.min(maxSends, rateCheck.remaining);
     const targets = (onlyQuente
       ? leads.filter(l => l.qualification?.classificacao === 'QUENTE' && l.whatsapp)
       : leads.filter(l => l.whatsapp)
-    ).slice(0, maxSends);
+    )
+      .filter(l => !conversationStore.isBlocked(l.whatsapp?.replace(/\D/g, '')))
+      .slice(0, effectiveMax);
 
     if (targets.length === 0) {
       return res.json({ sent: 0, message: 'Nenhum lead elegível para envio' });
@@ -1043,9 +1072,10 @@ app.post('/api/whatsapp/send-batch', async (req, res) => {
 
     res.json({
       queued: targets.length,
-      limitado: totalElegiveis > maxSends,
+      limitado: totalElegiveis > effectiveMax,
       total_elegiveis: totalElegiveis,
-      message: `Enviando para ${targets.length} de ${totalElegiveis} leads elegíveis (limite: ${maxSends})`,
+      rateLimit: rateLimiter.getStats(),
+      message: `Enviando para ${targets.length} leads (limite diário: ${rateCheck.remaining} restantes)`,
     });
 
     (async () => {
@@ -1055,17 +1085,39 @@ app.post('/api/whatsapp/send-batch', async (req, res) => {
         const message = lead.qualification?.mensagem_whatsapp;
         if (!message) { failed++; continue; }
 
+        // Re-check rate limit antes de cada envio
+        if (!rateLimiter.canSendNow().allowed) {
+          console.warn('[WhatsApp] Limite diário atingido durante batch, parando.');
+          break;
+        }
+
+        const phone = lead.whatsapp.replace(/\D/g, '');
         try {
-          await sendWhatsApp(lead.whatsapp, message);
+          await sendWhatsApp(phone, message);
+          rateLimiter.incrementSent();
           sent++;
-          console.log(`[WhatsApp] ✅ Enviado para ${lead.nome} (${lead.whatsapp}) — ${sent}/${targets.length}`);
+
+          // Criar conversa para rastrear estado
+          conversationStore.createConversation(phone, {
+            leadName: lead.nome,
+            segment: lead.segmento || process.env.SEGMENT_ID,
+            leadId: lead.place_id || lead.id,
+            qualificationData: lead.qualification || {},
+          });
+          conversationStore.addMessage(phone, {
+            direction: 'out',
+            text: message,
+            timestamp: new Date().toISOString(),
+          });
+
+          console.log(`[WhatsApp] Enviado para ${lead.nome} (${phone}) — ${sent}/${targets.length}`);
         } catch (err) {
           failed++;
-          console.error(`[WhatsApp] ❌ Falhou para ${lead.nome}: ${err.message}`);
+          console.error(`[WhatsApp] Falhou para ${lead.nome}: ${err.message}`);
         }
 
         if (sent + failed < targets.length) {
-          await sleep(delayMs);
+          await sleep(rateLimiter.getRandomDelay());
         }
       }
       console.log(`[WhatsApp] Batch concluído: ${sent} enviados, ${failed} falhas`);
@@ -1076,8 +1128,230 @@ app.post('/api/whatsapp/send-batch', async (req, res) => {
 });
 
 // ════════════════════════════════════════════════════
-// START
+// WHATSAPP WEBHOOK (recebe mensagens dos leads)
 // ════════════════════════════════════════════════════
+
+app.post('/api/whatsapp/webhook', async (req, res) => {
+  // Responder 200 imediatamente (crítico para Evolution API)
+  res.status(200).json({ received: true });
+
+  // Forward para Inspector CRM (se configurado)
+  const inspectorUrl = process.env.INSPECTOR_API_URL;
+  if (inspectorUrl) {
+    axios.post(`${inspectorUrl}/v1/webhooks/evolution`, req.body, {
+      headers: { 'apikey': process.env.EVOLUTION_API_KEY || '', 'Content-Type': 'application/json' },
+      timeout: 5000,
+    }).catch(() => {}); // fire-and-forget
+  }
+
+  try {
+    const body = req.body;
+
+    // Só processar mensagens recebidas
+    if (body.event !== 'messages.upsert') return;
+
+    const key = body.data?.key;
+    // Ignorar mensagens próprias
+    if (key?.fromMe) return;
+    // Ignorar grupos
+    if (key?.remoteJid?.includes('@g.us')) return;
+
+    const phone = key?.remoteJid?.replace('@s.whatsapp.net', '');
+    const text = body.data?.message?.conversation
+      ?? body.data?.message?.extendedTextMessage?.text
+      ?? '';
+    const pushName = body.data?.pushName ?? '';
+
+    if (!text || !phone) return;
+
+    // Blocklist check
+    if (conversationStore.isBlocked(phone)) return;
+
+    // Buscar ou criar conversa
+    let convo = conversationStore.getConversation(phone);
+    if (!convo) {
+      // Lead respondeu sem ter sido contatado pelo sistema — criar conversa nova
+      convo = conversationStore.createConversation(phone, { leadName: pushName });
+    }
+
+    // Registrar mensagem recebida
+    conversationStore.addMessage(phone, {
+      direction: 'in',
+      text,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Recarregar conversa após addMessage
+    convo = conversationStore.getConversation(phone);
+
+    // Processar no flow engine
+    const result = flowEngine.process(phone, text, convo, pushName);
+
+    // Atualizar estado ANTES de enviar (salvar primeiro, como recomendado)
+    conversationStore.updateStage(phone, result.newStage);
+
+    // Processar ações
+    for (const action of result.actions) {
+      if (action === 'blocklist') {
+        conversationStore.addToBlocklist(phone);
+      }
+      if (action === 'increment_objection') {
+        const c = conversationStore.getConversation(phone);
+        if (c) {
+          c.objectionRounds = (c.objectionRounds || 0) + 1;
+          conversationStore.saveConversation(phone, c);
+        }
+      }
+    }
+
+    // Enviar resposta (se houver)
+    if (result.response) {
+      // Delay 2-5s para parecer humano
+      await sleep(2000 + Math.random() * 3000);
+      await sendWhatsApp(phone, result.response);
+      conversationStore.addMessage(phone, {
+        direction: 'out',
+        text: result.response,
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    // Notificar humano se necessário
+    if (result.actions.includes('notify_human')) {
+      const updatedConvo = conversationStore.getConversation(phone);
+      await notifyHumanHandoff(phone, updatedConvo);
+    }
+
+    console.log(`[Webhook] ${phone} (${pushName}): "${text.substring(0, 50)}" → ${result.newStage}${result.response ? ' [respondido]' : ''}`);
+  } catch (err) {
+    console.error('[Webhook] Erro ao processar:', err.message);
+  }
+});
+
+// ════════════════════════════════════════════════════
+// CONVERSAS — APIs de gerenciamento
+// ════════════════════════════════════════════════════
+
+app.get('/api/conversations', (req, res) => {
+  const { stage } = req.query;
+  const convos = conversationStore.getAllConversations(stage || null);
+  res.json({ total: convos.length, conversations: convos, stats: conversationStore.getStats() });
+});
+
+app.get('/api/conversations/stats', (req, res) => {
+  res.json(conversationStore.getStats());
+});
+
+app.get('/api/conversations/blocklist', (req, res) => {
+  res.json({ blocklist: conversationStore.getBlocklist() });
+});
+
+app.get('/api/conversations/:phone', (req, res) => {
+  const convo = conversationStore.getConversation(req.params.phone);
+  if (!convo) return res.status(404).json({ error: 'Conversa não encontrada' });
+  res.json(convo);
+});
+
+app.post('/api/conversations/:phone/stage', (req, res) => {
+  const { stage } = req.body;
+  if (!stage) return res.status(400).json({ error: 'stage é obrigatório' });
+  const convo = conversationStore.updateStage(req.params.phone, stage);
+  if (!convo) return res.status(404).json({ error: 'Conversa não encontrada' });
+  res.json({ message: `Estágio atualizado para "${stage}"`, conversation: convo });
+});
+
+// ════════════════════════════════════════════════════
+// FOLLOW-UPS — Agendamento de follow-up
+// ════════════════════════════════════════════════════
+
+app.get('/api/followups/pending', (req, res) => {
+  const now = Date.now();
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const followupSchedule = [1, 3, 7]; // dias após primeiro contato
+
+  const contacted = conversationStore.getByStage('contacted');
+  const pending = [];
+
+  for (const entry of contacted) {
+    const convo = conversationStore.getConversation(entry.phone);
+    if (!convo || convo.optedOut) continue;
+
+    const daysSinceContact = Math.floor((now - new Date(convo.firstContactAt).getTime()) / DAY_MS);
+    const nextFollowupDay = followupSchedule[convo.followupsSent || 0];
+
+    if (nextFollowupDay && daysSinceContact >= nextFollowupDay && (convo.followupsSent || 0) < 3) {
+      pending.push({
+        phone: entry.phone,
+        leadName: convo.leadName,
+        daysSinceContact,
+        followupNumber: (convo.followupsSent || 0) + 1,
+        segment: convo.segment,
+      });
+    }
+  }
+
+  res.json({ total: pending.length, pending, rateLimit: rateLimiter.getStats() });
+});
+
+app.post('/api/followups/send', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: 'phone é obrigatório' });
+
+  const rateCheck = rateLimiter.canSendNow();
+  if (!rateCheck.allowed) {
+    return res.status(429).json({ error: rateCheck.reason });
+  }
+
+  const convo = conversationStore.getConversation(phone);
+  if (!convo) return res.status(404).json({ error: 'Conversa não encontrada' });
+  if (convo.optedOut) return res.status(400).json({ error: 'Lead optou por sair' });
+  if (conversationStore.isBlocked(phone)) return res.status(400).json({ error: 'Número bloqueado' });
+
+  const followupNum = (convo.followupsSent || 0) + 1;
+  if (followupNum > 3) return res.status(400).json({ error: 'Máximo de 3 follow-ups atingido' });
+
+  // Buscar template de follow-up do config
+  try {
+    const config = getConfig(convo.segment);
+    const respostas = config?.respostas || {};
+    const templateKey = `followup_${followupNum}`;
+    let message = respostas[templateKey] || `Oi! Só passando pra ver se viu minha mensagem sobre o ${config?.produto?.nome || 'nosso produto'}. Posso ajudar?`;
+
+    // Interpolar variáveis
+    const vars = {
+      nome: convo.leadName || 'amigo',
+      nomeSimples: (convo.leadName || 'amigo').split(' ')[0],
+      produto: config?.produto?.nome || 'Bookou',
+      trial: config?.produto?.trial || '7 dias grátis',
+      argumento: convo.qualificationData?.argumento_principal || '',
+    };
+    message = message.replace(/\{(\w+)\}/g, (_, key) => vars[key] || '');
+
+    await sendWhatsApp(phone, message);
+    rateLimiter.incrementSent();
+
+    conversationStore.addMessage(phone, {
+      direction: 'out',
+      text: message,
+      timestamp: new Date().toISOString(),
+      type: `followup_${followupNum}`,
+    });
+    conversationStore.incrementFollowups(phone);
+
+    res.json({ success: true, followupNumber: followupNum, phone });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ════════════════════════════════════════════════════
+// RATE LIMIT — Stats
+// ════════════════════════════════════════════════════
+
+app.get('/api/rate-limit', (req, res) => {
+  res.json(rateLimiter.getStats());
+});
+
 // ════════════════════════════════════════════════════
 // CACHE & SEEN REGISTRY ENDPOINTS
 // ════════════════════════════════════════════════════
