@@ -34,7 +34,7 @@ services:
 
   scraper:
     build: ./scraper
-    container_name: bookou-scraper
+    container_name: juriai-scraper
     restart: unless-stopped
     ports:
       - "3099:3099"
@@ -48,8 +48,8 @@ services:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
       - EVOLUTION_API_URL=${EVOLUTION_API_URL:-http://187.77.54.141:8080}
       - EVOLUTION_API_KEY=${EVOLUTION_API_KEY:-}
-      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-bookou}
-      - SEGMENT_ID=${SEGMENT_ID:-barbearias}
+      - EVOLUTION_INSTANCE=${EVOLUTION_INSTANCE:-juriai}
+      - SEGMENT_ID=${SEGMENT_ID:-escritorios-advocacia}
       - SCRAPER_API_KEY=${SCRAPER_API_KEY:-}
       - ENRICH_CONCURRENCY=${ENRICH_CONCURRENCY:-3}
       - CACHE_BACKEND=${CACHE_BACKEND:-memory}
@@ -72,33 +72,5 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
-    depends_on:
-      evolution:
-        condition: service_started
-
-  evolution:
-    image: atendai/evolution-api:v1.8.2
-    container_name: evolution-api
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      - SERVER_URL=http://localhost:8080
-      - AUTHENTICATION_TYPE=apikey
-      - AUTHENTICATION_API_KEY=${EVOLUTION_API_KEY:-}
-      - WEBHOOK_URL=http://scraper:3099/api/whatsapp/webhook
-      - WEBHOOK_BY_EVENTS=false
-      - WEBHOOK_BASE64=false
-      - DATABASE_ENABLED=false
-      - CACHE_REDIS_ENABLED=false
-      - RABBITMQ_ENABLED=false
-      - WEBSOCKET_ENABLED=false
-      - LOG_LEVEL=ERROR
-      - LOG_COLOR=false
-      - DEL_INSTANCE=false
-    volumes:
-      - evolution_data:/evolution/instances
-
 volumes:
   n8n_data:
-  evolution_data:

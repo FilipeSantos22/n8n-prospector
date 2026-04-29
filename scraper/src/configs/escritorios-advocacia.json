@@ -1,0 +1,109 @@
+{
+  "id": "escritorios-advocacia",
+  "nome": "Escritórios de Advocacia",
+  "produto": {
+    "nome": "JuriAI",
+    "descricao": "gestao de processos, prazos automaticos, documentos com IA, financeiro, importacao por OAB/CPF/CNPJ",
+    "planos": [
+      { "nome": "Basico", "preco": "R$97/mes" },
+      { "nome": "Profissional", "preco": "R$197/mes" },
+      { "nome": "Escritorio", "preco": "R$397/mes" }
+    ],
+    "trial": "teste gratuito",
+    "precoStart": "R$97"
+  },
+  "respostas": {
+    "engaged": "Opa {nomeSimples}, que bom! A JuriAI e um sistema completo de gestao pra escritorios de advocacia — controle de processos, prazos automaticos, documentos com IA e financeiro, tudo num so lugar. Quer saber mais como funciona?",
+    "interested": "Massa! Da uma olhada no site juriai.winclick.com.br, la voce ve os planos e ja consegue criar a conta do escritorio. Se tiver qualquer duvida, me chama aqui que te ajudo!",
+    "interested_confirm": "Isso ai, {nomeSimples}! Acessa la o juriai.winclick.com.br e qualquer duvida me chama aqui. Valeu!",
+    "objection_price": "Entendo! O plano comeca em {precoStart}/mes — menos que 1 hora de honorario. So com os prazos que voce nao perde mais, ja se paga no primeiro mes. Quer que te mostre na pratica?",
+    "objection_doubt": "Funciona assim: voce importa seus processos pelo numero da OAB em segundos — tribunal, vara, partes, tudo automatico. O sistema monitora prazos e avisa com 30, 15, 7 e 1 dia de antecedencia. Ainda tem financeiro, documentos com IA e controle de equipe. Quer ver na pratica?",
+    "objection_general": "Tranquilo! Se quiser, posso te mostrar rapidinho como funciona, sem compromisso nenhum. O que acha?",
+    "escalate": "Entendo suas duvidas! Vou passar pra alguem do time que consegue te explicar tudo direitinho. Um momento!",
+    "opted_out": "Sem problema! Desculpa qualquer incomodo. Se um dia precisar, e so mandar mensagem. Valeu!",
+    "human": "Beleza! Ja vou passar pra alguem do time te atender. Em instantes entram em contato!",
+    "fallback": "Desculpa, nao entendi direito. Voce gostaria de conhecer o sistema de gestao juridica? Me responde SIM que te explico rapidinho",
+    "followup_1": "E ai {nomeSimples}, tudo certo? Vi que nao consegui falar com voce. Se tiver interesse no sistema de gestao juridica, e so responder aqui!",
+    "followup_2": "Oi {nomeSimples}! Lembrei do seu escritorio e queria te mostrar como outros advogados aqui de Goiania estao usando a JuriAI pra organizar processos e nunca mais perder um prazo. Quer dar uma olhada?",
+    "followup_3": "Fala {nomeSimples}, ultima vez que te mando mensagem! Se quiser conhecer a JuriAI e so responder, senao sem problema nenhum. Abraco!"
+  },
+  "busca": {
+    "queries": ["escritorio de advocacia", "advogado", "advogados associados", "assessoria juridica", "consultoria juridica", "escritorio juridico"],
+    "nearbyKeywords": ["advocacia", "advogado", "juridico"],
+    "googlePlaceType": "lawyer",
+    "foursquareCategory": "12000",
+    "foursquareQuery": "advogado",
+    "cnaes": ["6911301", "6911302", "6912500"],
+    "instagramHashtags": ["advogado", "advocacia", "direitobr", "advogada", "escritoriodeadvocacia", "direitobrasileiro"],
+    "instagramBioKeywords": ["advogad", "advocacia", "juridic", "direito", "oab", "escritorio", "penal", "trabalhist", "tribut", "civil", "famil"],
+    "instagramHandlePrefixes": ["adv", "advocacia", "escritorio", "dr.", "dra."]
+  },
+  "analise": {
+    "painKeywords": {
+      "prazo": "\\b(prazo|praz[oa]s|vencimento|venc[ei]|perdi|perdeu|atras[oa]d)\\b",
+      "desorganizacao": "\\b(desorganizad|bagunça|confus|perdid|caótic|perdeu|demor[oua])\\b",
+      "processo": "\\b(process[oa]?s?|ação|ações|audiência|audiencia|citação|intimação)\\b",
+      "atendimento_ruim": "\\b(mal atendid|não retorn|sem retorno|demora.*responder|não respond|sumiu)\\b",
+      "financeiro": "\\b(cobrança|cobr|honorári|pagamento|devendo|inadimplen|fatura)\\b"
+    },
+    "positiveKeywords": "\\b(organizado|ágil|rápid|eficiente|profissional|atencioso|competente|dedicad|recomend)\\b",
+    "schedulingPainKeys": ["prazo", "desorganizacao", "atendimento_ruim"],
+    "competitors": {
+      "projuris": "projuris\\.com|projuris\\b",
+      "astrea": "astrea\\.net|astrea\\b",
+      "jusbrasil": "jusbrasil\\.com|jusbrasil\\b",
+      "sajadv": "sajadv\\.com|sajadv\\b|saj\\b",
+      "lawoffice": "lawoffice",
+      "legaldesk": "legaldesk",
+      "advbox": "advbox\\.com|advbox\\b",
+      "legalcloud": "legalcloud",
+      "jurisoft": "jurisoft",
+      "gojur": "gojur\\.com|gojur\\b",
+      "digesto": "digesto\\.com|digesto\\b",
+      "themis": "themis\\.com|themis\\b",
+      "esaj": "esaj\\.tjsp|esaj\\b",
+      "aurum": "aurum\\.com|aurum\\b",
+      "juridoc": "juridoc\\.com|juridoc\\b"
+    }
+  },
+  "qualificacao": {
+    "promptContexto": "Consultor B2B SaaS gestao juridica. Produto: JuriAI (gestao de processos, prazos automaticos com alertas 30/15/7/1 dia, documentos com IA, financeiro, importacao por OAB/CPF/CNPJ, integracao com tribunais). Basico R$97/mes, Profissional R$197/mes, Escritorio R$397/mes.",
+    "doresTemplates": {
+      "sem_site": "Sem presenca digital — clientes nao conseguem encontrar o escritorio facilmente",
+      "sem_agendamento": "Tem site mas sem sistema de gestao — perde tempo com controle manual",
+      "reclama_fila": "Clientes reclamam de demora no retorno e falta de comunicacao",
+      "alto_volume": "Alto volume de processos — gestao manual de prazos e insustentavel",
+      "muitos_dias": "Escritorio com muitos advogados — precisa de controle de acesso e permissoes",
+      "usa_concorrente": "Usa {concorrentes} — pode estar insatisfeito com custo ou funcionalidades limitadas",
+      "marketing_abandonado": "Presenca digital abandonada — precisa de ferramentas que simplifiquem a gestao",
+      "desorganizacao": "Reviews mencionam desorganizacao — sistema de gestao juridica resolveria",
+      "default": ["Gestao manual de processos e prazos", "Sem alertas automaticos de vencimento"]
+    },
+    "mensagensTemplates": {
+      "fila": "Oi! Vi nas avaliacoes do {nome} que o movimento e forte! ⚖️ Sou da {produto} — com nosso sistema, voce importa processos pelo OAB e nunca mais perde um prazo. Posso te mostrar em 5 min?",
+      "sem_site": "Oi! Vi o {nome} no Google e curti o trabalho! ⚖️ Criei um sistema de gestao completo pra {segmento} — processos, prazos, documentos com IA e financeiro. Posso te mostrar rapidinho?",
+      "concorrente": "Oi! Conheco o {nome} e sei que ja usam sistema juridico. ⚖️ Sou da {produto} — alem de processos, temos importacao automatica por OAB, alertas de prazo e IA pra documentos. Queria te mostrar, topa?",
+      "alto_volume": "Oi! O {nome} e referencia no Google com {avaliacoes} avaliacoes! ⚖️ Sou da {produto}, sistema de gestao pra {segmento} (processos + prazos + financeiro + IA). Queria te mostrar como pode ajudar, topa?",
+      "default": "Oi! Conheci o {nome} e achei o trabalho excelente! ⚖️ Sou da {produto} — sistema de gestao pra {segmento} com controle de processos, prazos automaticos, financeiro e IA pra documentos. Posso te mostrar em 5 min?",
+      "instagram": "Oi! Curti muito o trabalho do {nomeSimples}! ⚖️ Criei um sistema de gestao juridica completo, posso te mostrar?",
+      "followup": "Oi de novo! 😊 So passando pra ver se viu minha mensagem. Temos {trial} pra testar, sem compromisso!"
+    },
+    "argumentos": {
+      "fila": "Importacao automatica por OAB — todos os processos em segundos, sem digitar nada",
+      "sem_site": "Sistema completo de gestao — processos, prazos, financeiro e documentos com IA",
+      "concorrente": "{produto} e mais completo (processos + prazos + financeiro + IA) e feito pro Brasil",
+      "alto_volume": "Gestao completa: processos, alertas de prazo, financeiro e IA pra documentos",
+      "default": "Controle de processos + alertas automaticos de prazo + financeiro num so lugar"
+    },
+    "perfilLabels": {
+      "grande": "{segmentoSingular} grande e estabelecid{genero}",
+      "popular": "{segmentoSingular} reconhecid{genero}",
+      "crescimento": "{segmentoSingular} em crescimento",
+      "bairro": "{segmentoSingular} de bairro",
+      "pequeno": "{segmentoSingular} pequen{genero}/nov{genero}"
+    },
+    "segmentoSingular": "Escritório",
+    "segmentoPlural": "escritórios de advocacia",
+    "genero": "o"
+  }
+}

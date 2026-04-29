@@ -1,0 +1,221 @@
+{
+  "name": "JuriAI - Prospecção Escritórios de Advocacia",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [{ "triggerAtHour": 9 }]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron 9h Seg-Sex",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Trigger Manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══ Configuração de Prospecção JuriAI ═══\n// Fase 1: Goiânia | Fase 2: Região GO | Fase 3: Brasília | Fase 4+: Expandir\nconst FASES = [\n  [{ city: 'Goiânia', state: 'GO' }],\n  [{ city: 'Aparecida de Goiânia', state: 'GO' }, { city: 'Anápolis', state: 'GO' }],\n  [{ city: 'Brasília', state: 'DF' }],\n  [{ city: 'Uberlândia', state: 'MG' }, { city: 'Ribeirão Preto', state: 'SP' }],\n  [{ city: 'Belo Horizonte', state: 'MG' }, { city: 'Campinas', state: 'SP' }],\n];\n\n// Semana atual desde o início (ajuste a data de início)\nconst START_DATE = new Date('2026-04-22');\nconst now = new Date();\nconst weekNum = Math.floor((now - START_DATE) / (7 * 24 * 60 * 60 * 1000));\nconst faseIdx = Math.min(weekNum, FASES.length - 1);\n\n// Só roda seg-sex\nconst dayOfWeek = now.getDay();\nif (dayOfWeek === 0 || dayOfWeek === 6) {\n  return []; // Pula fim de semana\n}\n\nreturn [{\n  json: {\n    cities: FASES[faseIdx],\n    fase: faseIdx + 1,\n    minReviews: 3,\n    radiusKm: 5,\n    maxSends: 5,  // Warm-up: começar com 5/dia\n    delayMs: 60000, // 60s entre envios\n    segmentId: 'escritorios-advocacia'\n  }\n}];"
+      },
+      "id": "config",
+      "name": "Config Prospecção",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [250, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://juriai-scraper:3099/api/v2/pipeline",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { cities: $json.cities, minReviews: $json.minReviews, radiusKm: $json.radiusKm, segmentId: $json.segmentId, newOnly: true } }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "pipeline",
+      "name": "Pipeline Scraper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 400]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "leads",
+        "options": {}
+      },
+      "id": "split",
+      "name": "Separar Leads",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [730, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-contact",
+              "leftValue": "={{ $json.whatsapp || $json.telefone }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEquals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-contact",
+      "name": "Tem Contato?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [960, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $input.all();\nconst total = leads.length;\nconst quentes = leads.filter(l => l.json.qualification?.classificacao === 'QUENTE').length;\nconst mornos = leads.filter(l => l.json.qualification?.classificacao === 'MORNO').length;\nconst comWa = leads.filter(l => l.json.whatsapp).length;\nconst aiAnalyzed = leads.filter(l => l.json.qualification?.ai_analyzed).length;\n\nreturn [{\n  json: {\n    mensagem: `⚖️ Prospecção JuriAI — Fase ${$('Config Prospecção').item.json.fase}\\n\\n📊 Total: ${total} leads com contato\\n🔥 Quentes: ${quentes}\\n🟡 Mornos: ${mornos}\\n📱 Com WhatsApp: ${comWa}\\n🤖 Qualificados por IA: ${aiAnalyzed}`\n  }\n}];"
+      },
+      "id": "summary",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 280]
+    },
+    {
+      "parameters": {
+        "jsCode": "const leads = $input.all().map(item => item.json);\nreturn [{ json: { leads } }];"
+      },
+      "id": "aggregate-leads",
+      "name": "Agrupar Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1200, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://juriai-scraper:3099/api/whatsapp/send-batch",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { leads: $json.leads, onlyQuente: false, maxSends: $('Config Prospecção').item.json.maxSends, delayMs: $('Config Prospecção').item.json.delayMs } }}",
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "send-whatsapp",
+      "name": "Enviar WhatsApp",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1430, 420]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "crm-enabled",
+              "leftValue": "={{ $env.CRM_API_URL && $env.CRM_INGEST_API_KEY && $env.CRM_TENANT_ID ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": { "type": "string", "operation": "equals" }
+            },
+            {
+              "id": "class-allowed",
+              "leftValue": "={{ ($env.CRM_INGEST_CLASSES || 'QUENTE,MORNO').split(',').map(s => s.trim()).includes($json.qualification?.classificacao) ? 'yes' : 'no' }}",
+              "rightValue": "yes",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "filter-crm",
+      "name": "CRM: filtrar",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2,
+      "position": [1200, 560]
+    },
+    {
+      "parameters": {
+        "jsCode": "const l = $json;\nconst q = l.qualification || {};\nconst ig = typeof l.instagram === 'object' ? l.instagram : null;\nconst payload = {\n  nome: l.nome || l.name,\n  whatsapp: l.whatsapp || null,\n  telefone: l.telefone || l.phone || null,\n  email: l.email || null,\n  endereco: l.endereco || l.address || null,\n  segmento: 'escritorios-advocacia',\n  source: l.source || 'prospector',\n  score: Number(q.score ?? l.score ?? 0),\n  classificacao: q.classificacao,\n  argumento_principal: q.argumento_principal || null,\n  mensagem_whatsapp: q.mensagem_whatsapp || null,\n  plano_recomendado: q.plano_recomendado || null,\n  tags: [...(Array.isArray(q.tags) ? q.tags : []), 'juriai', l.cidade || ''].filter(Boolean),\n  external_refs: {\n    place_id: l.place_id || null,\n    cnpj: l.cnpj || null,\n    instagram_handle: ig?.handle || (typeof l.instagram === 'string' ? l.instagram : null),\n    website: l.website || null\n  },\n  extra: {\n    rating: l.rating ?? null,\n    reviews_count: l.totalAvaliacoes ?? l.reviews_count ?? l.user_ratings_total ?? null,\n    cidade: l.cidade ?? null,\n    perfil: q.perfil ?? null,\n    dores_provaveis: q.dores_provaveis ?? null,\n    ai_analyzed: q.ai_analyzed ?? false\n  }\n};\nreturn [{ json: payload }];"
+      },
+      "id": "crm-map",
+      "name": "CRM: mapear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1430, 560]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.CRM_API_URL }}/api/v1/crm/leads/ingest",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.CRM_INGEST_API_KEY }}" },
+            { "name": "x-tenant-id", "value": "={{ $env.CRM_TENANT_ID }}" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "crm-ingest",
+      "name": "CRM: ingest",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1660, 560]
+    }
+  ],
+  "connections": {
+    "Cron 9h Seg-Sex": {
+      "main": [[{ "node": "Config Prospecção", "type": "main", "index": 0 }]]
+    },
+    "Trigger Manual": {
+      "main": [[{ "node": "Config Prospecção", "type": "main", "index": 0 }]]
+    },
+    "Config Prospecção": {
+      "main": [[{ "node": "Pipeline Scraper", "type": "main", "index": 0 }]]
+    },
+    "Pipeline Scraper": {
+      "main": [[{ "node": "Separar Leads", "type": "main", "index": 0 }]]
+    },
+    "Separar Leads": {
+      "main": [[{ "node": "Tem Contato?", "type": "main", "index": 0 }]]
+    },
+    "Tem Contato?": {
+      "main": [
+        [
+          { "node": "Resumo", "type": "main", "index": 0 },
+          { "node": "Agrupar Leads", "type": "main", "index": 0 },
+          { "node": "CRM: filtrar", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Agrupar Leads": {
+      "main": [[{ "node": "Enviar WhatsApp", "type": "main", "index": 0 }]]
+    },
+    "CRM: filtrar": {
+      "main": [[{ "node": "CRM: mapear", "type": "main", "index": 0 }]]
+    },
+    "CRM: mapear": {
+      "main": [[{ "node": "CRM: ingest", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" }
+}
