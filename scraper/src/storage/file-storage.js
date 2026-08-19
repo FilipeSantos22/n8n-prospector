@@ -139,6 +139,22 @@ class FileStorage {
     return !!history[identifier];
   }
 
+  // ═══ STATUS DE ABORDAGEM POR LEAD ═══
+  // Estado comercial (novo/abordado/respondeu/nao_perturbe/cliente).
+  // Separado do dedup-history, que só responde "já vi este lead?".
+
+  _leadStatusFile(tenantId) {
+    return this._filePath(tenantId, 'lead-status.json');
+  }
+
+  loadLeadStatus(tenantId = 'default') {
+    return this._readJSON(this._leadStatusFile(tenantId), {});
+  }
+
+  saveLeadStatus(data, tenantId = 'default') {
+    this._writeJSON(this._leadStatusFile(tenantId), data);
+  }
+
   // ═══ TEMP FILES (progresso de enrichment, etc.) ═══
 
   saveTempData(name, data, tenantId = 'default') {

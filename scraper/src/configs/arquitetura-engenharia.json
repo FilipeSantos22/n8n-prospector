@@ -1,0 +1,158 @@
+{
+  "id": "arquitetura-engenharia",
+  "nome": "Arquitetura e Engenharia Civil",
+  "produto": {
+    "nome": "WinClick",
+    "descricao": "atendimento por WhatsApp com IA — responde pela base de conhecimento do escritorio, qualifica o lead na conversa e passa para uma pessoa quando ha intencao real",
+    "planos": [
+      { "nome": "Essencial", "preco": "sob consulta" },
+      { "nome": "Profissional", "preco": "sob consulta" }
+    ],
+    "trial": "um numero de demonstracao configurado como escritorio de arquitetura, pra voce testar como se fosse um cliente seu",
+    "precoStart": "sob consulta"
+  },
+
+  "_nota_googlePlaceType": "null DE PROPOSITO. Nao existe tipo 'arquiteto' no Google Places. Teste real em Goiania (20 resultados): 8 vieram como general_contractor, 2 como consultant, o resto so point_of_interest/establishment. Usar includedType descartaria ~60% dos resultados. A mira vem so do textQuery.",
+
+  "busca": {
+    "queries": [
+      "escritorio de arquitetura",
+      "arquiteto",
+      "projeto arquitetonico",
+      "engenharia civil",
+      "projeto estrutural",
+      "construtora",
+      "design de interiores"
+    ],
+    "nearbyKeywords": [
+      "escritorio de arquitetura",
+      "arquiteto",
+      "engenharia civil",
+      "projeto arquitetonico"
+    ],
+    "googlePlaceType": null,
+    "cnaes": ["7111100", "7112000", "4120400"],
+    "instagramHashtags": ["arquitetura", "arquiteturaresidencial", "engenhariacivil", "projetoarquitetonico", "designdeinteriores"],
+    "instagramBioKeywords": ["arquitet", "engenhar", "projeto", "obra", "interiores", "construc", "crea", "cau", "reforma"],
+    "instagramHandlePrefixes": ["arq", "arquitetura", "engenharia", "studio"]
+  },
+
+  "analise": {
+    "_nota_painKeywords": "A negacao esta DENTRO do padrao de proposito. O matchWithNegationCheck() de analysis/reviews.js descarta um match quando encontra 'nao/sem/nunca' nas 5 palavras anteriores — logica pensada para barbearia ('sem fila' = elogio). Neste nicho a reclamacao E negativa por natureza ('nao respondeu', 'sem retorno'), entao o padrao precisa comecar na propria negacao para nao ser anulado.",
+    "painKeywords": {
+      "demora_resposta": "\\b((n[aã]o|nunca|jamais)\\s+(me\\s+)?(respond|retorn|deu retorno|atend)|sem\\s+(resposta|retorno)|demor(ou|a|am|aram)\\s+(muito\\s+)?(pra|para)\\s+(respond|retorn)|sumiu|nunca mais deu not[ií]cia)",
+      "dificuldade_contato": "\\b((dif[ií]cil|complicado)\\s+(de\\s+)?(falar|contato|contatar)|(n[aã]o|ningu[eé]m)\\s+(consigo\\s+)?(falar|atende)|(n[aã]o)\\s+atendem\\s+o\\s+telefone)",
+      "prazo": "\\b(atras(o|ou|ado|ada)|(n[aã]o)\\s+(cumpriu|entregou)|entregou\\s+(muito\\s+)?tarde|meses?\\s+de\\s+atraso|passou\\s+do\\s+prazo)",
+      "desorganizacao": "\\b(desorganizad|bagun[çc]a|confus[ao]|ca[oó]tic|perdeu\\s+(o\\s+)?(projeto|documento|prazo))",
+      "orcamento": "\\b((n[aã]o)\\s+(enviou|mandou)\\s+(o\\s+)?or[çc]amento|cobrou\\s+a\\s+mais|valor\\s+(bem\\s+)?acima\\s+do\\s+combinado)"
+    },
+    "positiveKeywords": "\\b(respond(e|eu|em)\\s+(muito\\s+)?r[aá]pid|sempre\\s+dispon[ií]vel|atencios|pront[ao]\\s+atendimento|retorn(a|ou)\\s+r[aá]pid|comunica[çc][aã]o\\s+[oó]tima)",
+    "schedulingPainKeys": ["demora_resposta", "dificuldade_contato"],
+
+    "_nota_excluirNomes": "Estagio 2 do spec: descartar rede/franquia nacional. Grandes construtoras e incorporadoras de capital aberto tem ciclo de venda longo e fornecedor definido.",
+    "excluirNomes": "\\b(mrv|tenda|direcional|cyrela|even|gafisa|rossi|pdg|trisul|eztec|helbor|tecnisa|moura dubeux|plano&plano|vitacon|melnick|cury)\\b|\\b(construtora|incorporadora)\\s+(mrv|tenda|cyrela)\\b",
+
+    "_nota_competitors": "Plataformas de atendimento/chatbot = DESQUALIFICADOR (o prospect ja resolveu, ou esta com concorrente). Os geradores de botao de WhatsApp do PROMPT (getbutton.io, joinchat, wa.link, whatsapp-widget) foram DELIBERADAMENTE deixados de fora: a tabela de ICP da ESTRATEGIA trata 'site com botao de WhatsApp' como sinal POSITIVO — e o website-analyzer ja captura isso em whatsappLinks. Inclui-los aqui desqualificaria o cliente ideal.",
+    "competitors": {
+      "tawk": "tawk\\.to",
+      "jivochat": "jivosite|jivochat|jivo_api",
+      "zendesk": "zendesk|zopim",
+      "intercom": "intercom\\.io|widget\\.intercom",
+      "drift": "driftt\\.com|drift\\.com/|js\\.driftt",
+      "crisp": "crisp\\.chat",
+      "tidio": "tidio\\.co|tidiochat",
+      "freshchat": "freshchat|wchat\\.freshchat",
+      "livechat": "livechatinc|livechat\\.com",
+      "olark": "olark\\.com|static\\.olark",
+      "chaport": "chaport\\.com",
+      "leadster": "leadster\\.com|cdn\\.leadster",
+      "rdstation": "rdstation|rd\\.services",
+      "blip": "blip\\.ai|builder\\.blip",
+      "take": "take\\.net",
+      "zenvia": "zenvia\\.com",
+      "huggy": "huggy\\.io|huggy\\.chat",
+      "octadesk": "octadesk\\.com|octadesk\\.services",
+      "movidesk": "movidesk\\.com",
+      "chatvolt": "chatvolt\\.ai",
+      "manychat": "manychat\\.com|mctr\\.io",
+      "botmaker": "botmaker\\.com",
+      "weni": "weni\\.ai",
+      "umbler": "umbler\\.com/talk|umblertalk",
+      "chatwoot": "chatwoot\\.com|chatwoot\\.js",
+      "typebot": "typebot\\.io",
+      "poli": "poli\\.digital",
+      "digisac": "digisac\\.co|digisac\\.me",
+      "kommo": "kommo\\.com|amocrm",
+      "sleekflow": "sleekflow\\.io",
+      "wati": "wati\\.io"
+    }
+  },
+
+  "qualificacao": {
+    "_nota_modeloOportunidade": "atendimento (nao 'agendamento', o default). O scorer padrao premia quem NAO tem site — logica do Bookou, onde barbearia sem site precisa de pagina de agendamento. Para a WinClick e o inverso: sem site nao ha onde detectar nem instalar o assistente, e a tabela de ICP da ESTRATEGIA trata 'site no ar com botao de WhatsApp' como sinal positivo. Medido na 1a rodada: leads SEM site tiravam score medio 47.0 e COM site 43.3 — exatamente ao contrario do desejado.",
+    "modeloOportunidade": "atendimento",
+
+    "_nota_sweetSpot": "15-300 avaliacoes, conforme a tabela de ICP da ESTRATEGIA ('opera de verdade e recebe demanda; acima disso, ciclo de venda longo'). O default do sistema e 50-200.",
+    "sweetSpotAvaliacoes": [15, 300],
+
+    "promptContexto": "Consultor B2B da WinClick, agencia digital de Goiania. Produto: plataforma de atendimento por WhatsApp com IA — responde o cliente a partir da base de conhecimento do escritorio, qualifica o lead na conversa e transfere para uma pessoa quando identifica intencao real de compra. Caso em producao: Horus, construcao civil. Prospect ideal: escritorio de arquitetura ou engenharia civil de 2 a 15 pessoas, com site no ar e botao de WhatsApp, MAS SEM widget de chat/chatbot instalado. Sinal mais forte de todos: avaliacao recente reclamando de demora para responder ou de dificuldade de contato. NUNCA invente dado: se a evidencia nao esta no material, o campo fica vazio — a saida vira mensagem para pessoa real e gancho inventado queima o contato.",
+
+    "doresTemplates": {
+      "sem_site": "Sem site no ar — nao da pra avaliar o atendimento digital nem tem onde instalar o assistente",
+      "sem_agendamento": "Site no ar sem nenhum canal de atendimento automatizado — contato fora do horario se perde",
+      "reclama_fila": "Avaliacoes recentes reclamam de demora para responder ou de dificuldade de contato",
+      "alto_volume": "Volume alto de demanda chegando no WhatsApp de quem tambem esta tocando projeto",
+      "muitos_dias": "Opera em horario comercial — todo contato fora dele fica sem resposta ate o dia seguinte",
+      "usa_concorrente": "Usa {concorrentes} — ja investe em atendimento, pode estar insatisfeito com custo ou com a qualidade das respostas",
+      "marketing_abandonado": "Investe em captacao mas o atendimento nao acompanha — lead pago que chega e nao e respondido",
+      "desorganizacao": "Avaliacoes mencionam desorganizacao no acompanhamento do cliente",
+      "default": ["Atendimento manual por WhatsApp", "Perguntas repetidas consumindo tempo de quem deveria estar em obra"]
+    },
+
+    "mensagensTemplates": {
+      "fila": "Oi! Sou o Filipe, da WinClick, aqui de Goiania. Achei o {nome} no Google — o trabalho de voces tem avaliacao otima, e apareceu num comentario ou outro que as vezes demora pra responder. Isso quase nunca e descaso: e volume chegando no WhatsApp de quem tambem esta tocando projeto. Montei um atendente com IA pra Horus, de construcao civil: responde as perguntas que se repetem com o material do proprio escritorio e so passa pra pessoa quando o contato e serio. Quer ver funcionando antes de qualquer conversa? Se nao fizer sentido, e so me falar que eu nao escrevo de novo.",
+      "sem_site": "Oi! Sou o Filipe, da WinClick, aqui de Goiania. Achei o {nome} no Google e vi que voces atendem direto pelo WhatsApp. Montei um atendente com IA pra Horus, de construcao civil: ele responde as perguntas que se repetem (prazo, area de atendimento, como funciona o processo) com o material do proprio escritorio, e so passa pra pessoa quando o contato e serio. Quer ver funcionando antes de qualquer conversa? Se nao fizer sentido, e so me falar que eu nao escrevo de novo.",
+      "concorrente": "Oi! Sou o Filipe, da WinClick, aqui de Goiania. Vi que o {nome} ja usa uma ferramenta de atendimento no site. Trabalho com uma plataforma de atendimento por WhatsApp com IA que responde pela base de conhecimento do proprio escritorio e qualifica o lead antes de passar pra pessoa — bem diferente de chatbot de arvore. Se quiser comparar, posso te mostrar funcionando. Se nao fizer sentido, e so me falar que eu nao escrevo de novo.",
+      "alto_volume": "Oi! Sou o Filipe, da WinClick, aqui de Goiania. Achei o {nome} no Google — {avaliacoes} avaliacoes, entao imagino o volume de contato que chega. E justamente ai que a maioria dos escritorios perde cliente fora do horario. Montei um atendente com IA pra Horus, de construcao civil: responde o repetitivo com o material do escritorio e so passa pra pessoa quando o contato e serio. Quer ver funcionando? Se nao fizer sentido, e so me falar que eu nao escrevo de novo.",
+      "default": "Oi! Sou o Filipe, da WinClick, aqui de Goiania. Achei o {nome} no Google e reparei que voces atendem por WhatsApp direto pelo site — e e justamente ai que a maioria dos escritorios perde contato fora do horario. Montei um atendente com IA pra Horus, de construcao civil: ele responde as perguntas que se repetem (prazo, area de atendimento, como funciona o processo) com o material do proprio escritorio, e so passa pra pessoa quando o contato e serio. Quer ver funcionando antes de qualquer conversa? Se nao fizer sentido, e so me falar que eu nao escrevo de novo.",
+      "instagram": "Oi! Filipe aqui, da WinClick (Goiania). Acompanhei o trabalho do {nomeSimples} e queria te mostrar um atendente com IA que responde no WhatsApp pela base do proprio escritorio. Posso te mandar um numero de demonstracao pra voce testar como se fosse um cliente seu?",
+      "followup": "Oi! Nao vim perguntar se voce viu a mensagem. Vim mostrar: esse e um print de uma conversa real do atendente respondendo um cliente de construcao civil fora do horario comercial. Se quiser testar no seu contexto, me fala que eu configuro {trial}."
+    },
+
+    "argumentos": {
+      "fila": "A reclamacao de demora ja esta publica nas avaliacoes — o assistente responde na hora, inclusive fora do horario",
+      "sem_site": "Atendimento por WhatsApp com IA usando o material do proprio escritorio — sem precisar de site novo",
+      "concorrente": "{produto} responde pela base de conhecimento do escritorio e qualifica na conversa — nao e chatbot de arvore de opcoes",
+      "alto_volume": "Filtra o repetitivo e entrega pra pessoa so o contato serio — devolve tempo de quem esta tocando projeto",
+      "default": "Responde o cliente no WhatsApp 24h com o material do proprio escritorio e so passa pra pessoa quando ha intencao real"
+    },
+
+    "perfilLabels": {
+      "grande": "{segmentoSingular} grande e estabelecid{genero}",
+      "popular": "{segmentoSingular} reconhecid{genero} na regiao",
+      "crescimento": "{segmentoSingular} em crescimento",
+      "bairro": "{segmentoSingular} de porte pequeno",
+      "pequeno": "{segmentoSingular} pequen{genero}/nov{genero}"
+    },
+
+    "segmentoSingular": "Escritório",
+    "segmentoPlural": "escritórios de arquitetura e engenharia",
+    "genero": "o"
+  },
+
+  "respostas": {
+    "engaged": "Opa {nomeSimples}, que bom! A ideia e simples: um atendente com IA no seu WhatsApp que responde as perguntas que mais se repetem (prazo, area de atendimento, como funciona o processo) usando o material do proprio escritorio — e so te passa o contato quando percebe intencao real. Quer testar num numero de demonstracao?",
+    "interested": "Show! Vou te mandar um numero configurado como escritorio de arquitetura. Manda uma pergunta como se voce fosse um cliente seu e ve o que acontece. Qualquer coisa me chama aqui.",
+    "interested_confirm": "Isso ai, {nomeSimples}! Testa a vontade e me diz o que achou. Se quiser, depois eu configuro com o material do seu escritorio.",
+    "objection_price": "Entendo. O valor depende do volume de atendimento e do quanto voce quer que ele resolva sozinho — por isso prefiro te mostrar funcionando antes de falar de numero. Posso te mandar a demonstracao?",
+    "objection_doubt": "Funciona assim: voce me passa o material que ja tem (prazos, area de atendimento, como funciona o processo) e eu monto a base de conhecimento. O assistente responde no seu WhatsApp com isso, aprende o que perguntam mais, e quando o contato demonstra intencao real ele te chama. Quer ver na pratica?",
+    "objection_general": "Tranquilo! Se quiser, te mando so o numero de demonstracao pra voce brincar sem compromisso nenhum. O que acha?",
+    "escalate": "Boa pergunta — essa eu prefiro te responder direito. Me da um instante que eu te chamo.",
+    "opted_out": "Sem problema, {nomeSimples}! Nao escrevo de novo. Se um dia fizer sentido, e so me chamar. Abraco!",
+    "human": "Beleza! Ja te chamo aqui pra gente conversar direito.",
+    "fallback": "Desculpa, acho que nao entendi. Resumindo: e um atendente com IA pro WhatsApp do escritorio, que responde o repetitivo e te passa so o contato serio. Quer ver funcionando?",
+    "followup_1": "Oi {nomeSimples}! Deixo o convite de pe: posso te mandar um numero de demonstracao configurado como escritorio de arquitetura, pra voce testar como se fosse um cliente seu. Sem compromisso.",
+    "followup_2": "Oi {nomeSimples}! Trouxe uma conversa real do assistente respondendo um cliente de construcao civil fora do horario comercial. Se quiser ver no seu contexto, me fala.",
+    "followup_3": "Fala {nomeSimples}, ultima vez que escrevo! Se um dia fizer sentido, e so me chamar. Abraco e sucesso com os projetos!"
+  }
+}

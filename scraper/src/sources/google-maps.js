@@ -1,167 +1,215 @@
 const axios = require('axios');
 
 // ════════════════════════════════════════════════════
-// V1 — TEXT SEARCH (mantido para compatibilidade)
+// PLACES API (NEW) — places.googleapis.com/v1
+//
+// A API legada (/maps/api/place/*) foi fechada para projetos novos pelo Google
+// em 03/2025 e responde REQUEST_DENIED neste projeto. Todo o módulo usa a
+// Places API (New).
+//
+// ⚠️ CUSTO — o projeto opera SOMENTE no tier gratuito.
+// Na Places API (New) o `X-Goog-FieldMask` determina o SKU cobrado
+// (Essentials < Pro < Enterprise, do mais generoso ao mais apertado em
+// franquia mensal). Pedir campo a mais não encarece um pouco: promove a
+// chamada inteira para a faixa de menor franquia.
+// NÃO adicione campo ao FieldMask sem medir o impacto na cota.
 // ════════════════════════════════════════════════════
 
-async function searchGoogleMaps(city, state, apiKey, options = {}, config = null) {
-  const defaultQueries = config ? config.busca.queries : [
-    'barbearia', 'barber shop', 'barbearia masculina',
-    'studio barber', 'barbeiro', 'salão masculino',
-  ];
-  const { maxPages = 3, queries = defaultQueries } = options;
-  const allResults = [];
-  const seenPlaceIds = new Set();
+const PLACES_BASE = 'https://places.googleapis.com/v1';
 
-  for (const query of queries) {
-    const fullQuery = `${query} em ${city}, ${state}`;
-    console.log(`[Google Maps] Buscando: "${fullQuery}"`);
+// Discovery — inclui rating/userRatingCount de propósito: são campos de faixa
+// cara, mas 1 chamada cobre até 20 lugares e habilita o pre-filter, que corta
+// o volume ANTES do enrichment (onde o custo é de 1 chamada POR lead).
+// Sem eles aqui, o pre-filter por avaliações não roda e enriqueceríamos tudo.
+// `websiteUri` e `nationalPhoneNumber` entram aqui de carona: rating/userRatingCount
+// já colocam a chamada na faixa Enterprise, e o SKU é definido pelo campo de MAIOR
+// faixa pedido — então somar mais campos da mesma faixa não muda a cobrança.
+// Em troca, o pre-filter passa a poder aplicar a regra "sem telefone E sem site"
+// ANTES do enrichment, que é onde o custo é por lead.
+const DISCOVERY_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.formattedAddress',
+  'places.location',
+  'places.businessStatus',
+  'places.rating',
+  'places.userRatingCount',
+  'places.websiteUri',
+  'places.nationalPhoneNumber',
+  'nextPageToken',
+].join(',');
 
-    let pageToken = null;
-    let page = 0;
+// Details — só para leads que sobreviveram ao pre-filter.
+const DETAILS_FIELD_MASK = [
+  'id',
+  'nationalPhoneNumber',
+  'internationalPhoneNumber',
+  'websiteUri',
+  'regularOpeningHours',
+  'googleMapsUri',
+  'businessStatus',
+  'reviews',
+].join(',');
 
-    while (page < maxPages) {
-      try {
-        const params = {
-          query: fullQuery,
-          key: apiKey,
-          language: 'pt-BR',
-        };
+const MAX_PAGE_SIZE = 20; // teto da Places API (New)
 
-        if (pageToken) {
-          params.pagetoken = pageToken;
-          await sleep(2000);
-        }
+// ════════════════════════════════════════════════════
+// SEARCH TEXT — motor único de busca
+//
+// A `searchNearby` da API nova NÃO aceita keyword (só `includedTypes`), o que
+// devolve resultado poluído. A `searchText` mantém o alvo por termo e ainda
+// suporta paginação — é o equivalente real ao que a API legada fazia com
+// type + keyword.
+// ════════════════════════════════════════════════════
 
-        const { data } = await axios.get(
-          'https://maps.googleapis.com/maps/api/place/textsearch/json',
-          { params }
-        );
+/**
+ * Executa uma busca textual na Places API (New), com paginação.
+ * @param {string} textQuery - Termo de busca (ex: "barbearia")
+ * @param {string} apiKey
+ * @param {Object} opts
+ * @param {Object} [opts.rectangle] - { low: {latitude,longitude}, high: {...} }
+ * @param {string} [opts.includedType] - Tipo Google Places (ex: "hair_care")
+ * @param {number} [opts.maxPages=1] - Páginas de até 20 resultados
+ * @returns {Array} Resultados brutos da API
+ */
+async function searchText(textQuery, apiKey, opts = {}) {
+  const { rectangle, includedType, maxPages = 1 } = opts;
+  const results = [];
+  let pageToken = null;
+  let page = 0;
 
-        if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-          console.warn(`[Google Maps] Status: ${data.status} - ${data.error_message || ''}`);
-          break;
-        }
+  while (page < maxPages) {
+    const body = {
+      textQuery,
+      maxResultCount: MAX_PAGE_SIZE,
+      languageCode: 'pt-BR',
+      regionCode: 'BR',
+    };
+    if (rectangle) body.locationRestriction = { rectangle };
+    if (includedType) body.includedType = includedType;
+    if (pageToken) body.pageToken = pageToken;
 
-        for (const place of (data.results || [])) {
-          if (!seenPlaceIds.has(place.place_id)) {
-            seenPlaceIds.add(place.place_id);
-            allResults.push(parsePlaceResult(place, 'text_search'));
-          }
-        }
+    try {
+      const { data } = await axios.post(`${PLACES_BASE}/places:searchText`, body, {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': apiKey,
+          'X-Goog-FieldMask': DISCOVERY_FIELD_MASK,
+        },
+        timeout: 20000,
+      });
 
-        console.log(`[Google Maps] "${query}" página ${page + 1}: ${data.results?.length || 0} resultados (total único: ${allResults.length})`);
+      const places = data.places || [];
+      results.push(...places);
 
-        pageToken = data.next_page_token || null;
-        if (!pageToken) break;
-        page++;
-      } catch (err) {
-        console.error(`[Google Maps] Erro na busca "${query}":`, err.message);
-        break;
-      }
+      pageToken = data.nextPageToken || null;
+      if (!pageToken || places.length === 0) break;
+
+      page++;
+      await sleep(2000); // token precisa de alguns instantes para valer
+    } catch (err) {
+      const detail = err.response?.data?.error;
+      console.error(`[Places] Erro em "${textQuery}": ${detail?.status || err.message}${detail?.message ? ' — ' + detail.message.slice(0, 160) : ''}`);
+      break;
     }
   }
 
-  console.log(`[Google Maps] Total: ${allResults.length} resultados únicos em ${city}/${state}`);
+  return results;
+}
+
+// ════════════════════════════════════════════════════
+// V1 — TEXT SEARCH (compatibilidade com /api/search)
+// ════════════════════════════════════════════════════
+
+async function searchGoogleMaps(city, state, apiKey, options = {}, config = null) {
+  const defaultQueries = config ? config.busca.queries : ['barbearia', 'barber shop'];
+  const { maxPages = 3, queries = defaultQueries } = options;
+  const includedType = config?.busca?.googlePlaceType || null;
+
+  const allResults = [];
+  const seenIds = new Set();
+
+  for (const query of queries) {
+    const fullQuery = `${query} em ${city}, ${state}`;
+    console.log(`[Places] Buscando: "${fullQuery}"`);
+
+    const places = await searchText(fullQuery, apiKey, { includedType, maxPages });
+
+    let novos = 0;
+    for (const place of places) {
+      if (place.id && !seenIds.has(place.id)) {
+        seenIds.add(place.id);
+        allResults.push(parsePlaceResult(place, 'text_search'));
+        novos++;
+      }
+    }
+
+    console.log(`[Places] "${query}": ${places.length} retornados, +${novos} únicos (total: ${allResults.length})`);
+    await sleep(300);
+  }
+
+  console.log(`[Places] Total: ${allResults.length} resultados únicos em ${city}/${state}`);
   return allResults;
 }
 
 // ════════════════════════════════════════════════════
-// V2 — NEARBY SEARCH (grid geográfico)
+// V2 — BUSCA EM GRID GEOGRÁFICO
 // ════════════════════════════════════════════════════
 
 /**
- * Busca usando Nearby Search em grid de pontos
- * @param {Array} gridPoints - [{ lat, lng }, ...]
- * @param {number} radiusMeters - Raio em metros
- * @param {string} apiKey - Google Maps API key
+ * Varre o grid da cidade, uma busca por ponto.
+ *
+ * Mantém a estratégia da versão legada: as keywords do config são ALTERNADAS
+ * entre os pontos (1 keyword por ponto), não varridas todas em cada ponto.
+ * Varrer todas multiplicaria as chamadas pelo número de keywords — decisão de
+ * custo que precisa ser tomada explicitamente, não por efeito colateral da
+ * migração.
+ *
+ * @param {Array}  gridPoints - [{ lat, lng }, ...]
+ * @param {number} radiusMeters
+ * @param {string} apiKey
  * @param {Object} config - Config do segmento
  * @returns {Array} Leads únicos
  */
 async function nearbySearchGrid(gridPoints, radiusMeters, apiKey, config = null) {
   const allResults = [];
-  const seenPlaceIds = new Set();
-  let pointIndex = 0;
+  const seenIds = new Set();
 
   const keywords = config ? config.busca.nearbyKeywords : ['barbearia', 'barber'];
-  const placeType = config ? config.busca.googlePlaceType : 'hair_care';
+  const includedType = config?.busca?.googlePlaceType || null;
 
+  let pointIndex = 0;
   for (const point of gridPoints) {
     pointIndex++;
-    const keywordIndex = pointIndex % keywords.length;
-    const keyword = keywords[keywordIndex];
+    const keyword = keywords[pointIndex % keywords.length];
+    const rectangle = circleToRectangle(point.lat, point.lng, radiusMeters);
 
-    console.log(`[Nearby] Ponto ${pointIndex}/${gridPoints.length} (${point.lat},${point.lng}) keyword="${keyword}"`);
+    console.log(`[Places] Ponto ${pointIndex}/${gridPoints.length} (${point.lat},${point.lng}) keyword="${keyword}"`);
 
-    let pageToken = null;
-    let page = 0;
+    const places = await searchText(keyword, apiKey, { rectangle, includedType, maxPages: 2 });
 
-    while (page < 2) {
-      try {
-        const params = {
-          location: `${point.lat},${point.lng}`,
-          radius: radiusMeters,
-          keyword,
-          type: placeType,
-          key: apiKey,
-          language: 'pt-BR',
-        };
-
-        if (pageToken) {
-          params.pagetoken = pageToken;
-          await sleep(2000);
-        }
-
-        const { data } = await axios.get(
-          'https://maps.googleapis.com/maps/api/place/nearbysearch/json',
-          { params }
-        );
-
-        if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-          if (data.status === 'INVALID_REQUEST' && pageToken) {
-            await sleep(3000);
-            page++;
-            continue;
-          }
-          console.warn(`[Nearby] Status: ${data.status} - ${data.error_message || ''}`);
-          break;
-        }
-
-        let newCount = 0;
-        for (const place of (data.results || [])) {
-          if (!seenPlaceIds.has(place.place_id)) {
-            seenPlaceIds.add(place.place_id);
-            allResults.push({
-              ...parsePlaceResult(place, 'nearby_search'),
-              gridPoint: point,
-            });
-            newCount++;
-          }
-        }
-
-        if (newCount > 0) {
-          console.log(`[Nearby]   Página ${page + 1}: +${newCount} novos (total: ${allResults.length})`);
-        }
-
-        pageToken = data.next_page_token || null;
-        if (!pageToken) break;
-        page++;
-      } catch (err) {
-        console.error(`[Nearby] Erro no ponto ${pointIndex}:`, err.message);
-        break;
+    let novos = 0;
+    for (const place of places) {
+      if (place.id && !seenIds.has(place.id)) {
+        seenIds.add(place.id);
+        allResults.push({ ...parsePlaceResult(place, 'nearby_search'), gridPoint: point });
+        novos++;
       }
     }
 
-    // Rate limit entre pontos
+    if (novos > 0) {
+      console.log(`[Places]   +${novos} novos (total: ${allResults.length})`);
+    }
+
     await sleep(300);
   }
 
-  console.log(`[Nearby] Total: ${allResults.length} resultados únicos`);
+  console.log(`[Places] Total: ${allResults.length} resultados únicos`);
   return allResults;
 }
 
 /**
- * Busca combinada: Nearby Search (grid) + Text Search (complementar)
+ * Busca combinada por cidade (hoje: só o grid).
  */
 async function combinedSearch(city, state, gridPoints, radiusMeters, apiKey, config = null) {
   console.log(`\n${'═'.repeat(60)}`);
@@ -174,53 +222,49 @@ async function combinedSearch(city, state, gridPoints, radiusMeters, apiKey, con
 }
 
 // ════════════════════════════════════════════════════
-// PLACE DETAILS (otimizado)
+// PLACE DETAILS
 // ════════════════════════════════════════════════════
 
+/**
+ * Detalhes de um lugar. Retorno mantém EXATAMENTE o shape da versão legada
+ * para não quebrar o enrichment.
+ * @param {string} placeId - `id` da Places API (New)
+ * @param {string} apiKey
+ */
 async function getPlaceDetails(placeId, apiKey) {
   try {
-    const { data } = await axios.get(
-      'https://maps.googleapis.com/maps/api/place/details/json',
-      {
-        params: {
-          place_id: placeId,
-          key: apiKey,
-          fields: [
-            'formatted_phone_number',
-            'international_phone_number',
-            'website',
-            'opening_hours',
-            'url',
-            'reviews',
-            'business_status',
-          ].join(','),
-          language: 'pt-BR',
-          reviews_sort: 'newest',
-        }
-      }
-    );
+    const { data } = await axios.get(`${PLACES_BASE}/places/${encodeURIComponent(placeId)}`, {
+      headers: {
+        'X-Goog-Api-Key': apiKey,
+        'X-Goog-FieldMask': DETAILS_FIELD_MASK,
+      },
+      params: { languageCode: 'pt-BR', regionCode: 'BR' },
+      timeout: 15000,
+    });
 
-    if (data.status !== 'OK') return null;
-
-    const p = data.result;
     return {
-      telefone: p.formatted_phone_number || '',
-      telefoneInternacional: p.international_phone_number || '',
-      website: p.website || '',
-      horarios: p.opening_hours?.weekday_text || [],
-      horariosAberto: p.opening_hours?.open_now || false,
-      googleMapsUrl: p.url || '',
-      status: p.business_status || '',
-      reviews: (p.reviews || []).slice(0, 3).map(r => ({
-        autor: r.author_name,
-        nota: r.rating,
-        texto: r.text,
-        tempo: r.relative_time_description,
-        idioma: r.language,
+      telefone: data.nationalPhoneNumber || '',
+      telefoneInternacional: data.internationalPhoneNumber || '',
+      website: data.websiteUri || '',
+      horarios: data.regularOpeningHours?.weekdayDescriptions || [],
+      horariosAberto: data.regularOpeningHours?.openNow || false,
+      googleMapsUrl: data.googleMapsUri || '',
+      status: data.businessStatus || '',
+      reviews: (data.reviews || []).slice(0, 5).map(r => ({
+        autor: r.authorAttribution?.displayName || '',
+        nota: r.rating || 0,
+        texto: r.text?.text || r.originalText?.text || '',
+        // `tempo` continua textual para o tempoToMonths() da análise de reviews.
+        tempo: r.relativePublishTimeDescription || '',
+        // A API nova entrega timestamp absoluto — mais preciso que o texto
+        // relativo. Disponível para a ponderação por recência usar no futuro.
+        publicadoEm: r.publishTime || null,
+        idioma: r.text?.languageCode || '',
       })),
     };
   } catch (err) {
-    console.error(`[Place Details] Erro para ${placeId}:`, err.message);
+    const detail = err.response?.data?.error;
+    console.error(`[Place Details] Erro para ${placeId}: ${detail?.status || err.message}`);
     return null;
   }
 }
@@ -229,20 +273,38 @@ async function getPlaceDetails(placeId, apiKey) {
 // HELPERS
 // ════════════════════════════════════════════════════
 
+/**
+ * Converte centro + raio num retângulo.
+ * `searchText` só aceita `rectangle` em locationRestriction (circle existe
+ * apenas em locationBias, que é sugestão e deixa vazar resultado de fora da
+ * célula — ruim para cobertura de grid).
+ */
+function circleToRectangle(lat, lng, radiusMeters) {
+  const dLat = radiusMeters / 111320;
+  const dLng = radiusMeters / (111320 * Math.cos(lat * Math.PI / 180));
+  return {
+    low: { latitude: lat - dLat, longitude: lng - dLng },
+    high: { latitude: lat + dLat, longitude: lng + dLng },
+  };
+}
+
+/**
+ * Normaliza um place da API nova para o shape que o pipeline já consome.
+ */
 function parsePlaceResult(place, source) {
   return {
     source,
-    place_id: place.place_id,
-    nome: place.name,
-    endereco: place.formatted_address || place.vicinity || '',
-    lat: place.geometry?.location?.lat,
-    lng: place.geometry?.location?.lng,
+    place_id: place.id,
+    nome: place.displayName?.text || '',
+    endereco: place.formattedAddress || '',
+    lat: place.location?.latitude,
+    lng: place.location?.longitude,
     rating: place.rating || 0,
-    totalAvaliacoes: place.user_ratings_total || 0,
-    tipos: place.types || [],
-    aberto: place.opening_hours?.open_now || null,
-    priceLevel: place.price_level || null,
-    businessStatus: place.business_status || 'OPERATIONAL',
+    totalAvaliacoes: place.userRatingCount || 0,
+    businessStatus: place.businessStatus || 'OPERATIONAL',
+    // Já no discovery — habilitam o pre-filter a cortar antes do enrichment.
+    telefone: place.nationalPhoneNumber || '',
+    website: place.websiteUri || '',
   };
 }
 

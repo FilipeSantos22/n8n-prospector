@@ -39,6 +39,12 @@ function loadConfig(id) {
     compiled.analise.competitors[key] = new RegExp(pattern, 'i');
   }
 
+  // analise.excluirNomes (OPCIONAL): string -> RegExp
+  // Nomes de rede/franquia a descartar no pre-filter. Ausente = nada a excluir.
+  compiled.analise.excluirNomes = raw.analise.excluirNomes
+    ? new RegExp(raw.analise.excluirNomes, 'i')
+    : null;
+
   configCache.set(id, compiled);
   return compiled;
 }

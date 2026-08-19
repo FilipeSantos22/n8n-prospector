@@ -39,9 +39,9 @@ async function qualifyWithAI(lead, config = null) {
       // Rate limit: 30 req/min na Groq free tier — esperar 2.5s entre chamadas
       await new Promise(r => setTimeout(r, 2500));
 
-      // ── Groq (Llama 3.3 70B — gratuito) ──
+      // ── Groq (gpt-oss-120b — gratuito) ──
       const { data } = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-        model: 'llama-3.3-70b-versatile',
+        model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
         max_tokens: 400,
         temperature: 0.2,
         messages: [
@@ -114,11 +114,11 @@ function buildPrompt(lead, config = null) {
   if (lead.instagram?.isBusiness) flags.push('IG_BIZ');
   if (lead.whatsapp) flags.push('WHATSAPP');
   if (lead.cnpj) flags.push(`CNPJ:${lead.porte || '?'}`);
-  if (reviewAnalysis.ownerMentionsScheduling) flags.push('DONO_AGENDA_MANUAL');
-  if (reviewAnalysis.noShowPain) flags.push('NO_SHOW');
+  if (reviewAnalysis.ownerMentionsManualScheduling) flags.push('DONO_AGENDA_MANUAL');
+  if (reviewAnalysis.hasNoshowChaos) flags.push('NO_SHOW');
   if (reviewAnalysis.bimodalDistribution) flags.push('BIMODAL');
-  if (reviewAnalysis.reviewVelocity > 1.5) flags.push(`VEL:${reviewAnalysis.reviewVelocity.toFixed(1)}/m`);
-  if (reviewAnalysis.ownerResponds) flags.push('DONO_RESPONDE');
+  if (reviewAnalysis.velocityRatio > 1.5) flags.push(`VEL:${reviewAnalysis.velocityRatio.toFixed(1)}/m`);
+  if (reviewAnalysis.ownerRespondsToReviews) flags.push('DONO_RESPONDE');
   const marketingStatus = lead.marketingStatus || {};
   if (marketingStatus.maturityLevel !== undefined) flags.push(`MAT:${marketingStatus.maturityLevel}/4`);
   if (marketingStatus.channelFragmentation) flags.push('FRAG_CANAIS');
@@ -204,6 +204,54 @@ function qualifyWithRulesV2(lead, config = null) {
   };
 
   // ═══ OPORTUNIDADE (0-100) ═══
+  // O que conta como "oportunidade" depende do que o produto vende.
+  // Ver qualificacao.modeloOportunidade no config do segmento.
+  const modelo = config?.qualificacao?.modeloOportunidade || 'agendamento';
+  if (modelo === 'atendimento') {
+    scores.oportunidade = oportunidadeAtendimento(lead, reviewAnalysis, marketingStatus);
+  } else {
+    scores.oportunidade = oportunidadeAgendamento(lead, reviewAnalysis, marketingStatus);
+  }
+
+  // ═══ ALCANÇABILIDADE (0-100) ═══
+  // Zero info de contato = penalidade severa
+  const hasAnyContact = lead.whatsapp || lead.telefone || lead.email || lead.instagram?.found;
+  if (!hasAnyContact) {
+    scores.alcancabilidade -= 50;
+  } else {
+    if (lead.whatsapp) scores.alcancabilidade += 45;
+    else if (lead.telefone) scores.alcancabilidade += 20;
+
+    if (lead.instagram?.found) scores.alcancabilidade += 25;
+    if (lead.email) scores.alcancabilidade += 15;
+    if (lead.googleMapsUrl) scores.alcancabilidade += 10;
+
+    // CNPJ com telefone da Receita é confiável
+    if (lead.cnpj && lead.telefone) scores.alcancabilidade += 5;
+  }
+
+  scores.alcancabilidade = clamp(scores.alcancabilidade, 0, 100);
+
+  // ═══ TAMANHO (0-100) — multi-sinal ═══
+  scores.tamanho = estimateSize(lead, config);
+
+  // ═══ URGÊNCIA (0-100) — multi-sinal ═══
+  scores.urgencia = estimateUrgency(lead, reviewAnalysis, marketingStatus, config);
+
+  // ═══ CONFIANÇA (0-100) — qualidade dos dados ═══
+  scores.confianca = estimateConfidence(lead, reviewAnalysis);
+
+  return finalizarQualificacao(lead, scores, reviewAnalysis, marketingStatus, config);
+}
+
+/**
+ * Modelo "agendamento" — produtos tipo Bookou/JuriAI.
+ * Premissa: quem NÃO tem presença digital é a maior oportunidade, porque o
+ * produto entrega a página/o sistema que ele não tem.
+ */
+function oportunidadeAgendamento(lead, reviewAnalysis, marketingStatus) {
+  const scores = { oportunidade: 0 };
+
   // Presença digital
   if (!lead.website) {
     scores.oportunidade += 35;
@@ -277,36 +325,63 @@ function qualifyWithRulesV2(lead, config = null) {
     scores.oportunidade += 15;
   }
 
-  scores.oportunidade = clamp(scores.oportunidade, 0, 100);
+  return clamp(scores.oportunidade, 0, 100);
+}
 
-  // ═══ ALCANÇABILIDADE (0-100) ═══
-  // Zero info de contato = penalidade severa
-  const hasAnyContact = lead.whatsapp || lead.telefone || lead.email || lead.instagram?.found;
-  if (!hasAnyContact) {
-    scores.alcancabilidade -= 50;
+/**
+ * Modelo "atendimento" — produtos tipo WinClick (assistente de WhatsApp com IA).
+ *
+ * Premissa INVERTIDA em relação ao modelo de agendamento: o alvo é quem JÁ tem
+ * presença digital e JÁ atende por WhatsApp manualmente. Sem site não há onde
+ * detectar nem instalar o assistente, e um widget de atendimento instalado
+ * significa que o problema já foi resolvido (ou está com um concorrente).
+ *
+ * Pesos derivados da tabela de scoring do PROMPT-AGENTE-N8N.md.
+ */
+function oportunidadeAtendimento(lead, reviewAnalysis, marketingStatus) {
+  let score = 0;
+
+  const ws = lead.websiteAnalysis || {};
+  const temWidget = !!ws.usaConcorrente;
+  const temSiteVivo = !!lead.website && ws.analyzed === true;
+  const temWaNoSite = (ws.whatsappLinks || []).length > 0;
+  const temWhatsapp = !!lead.whatsapp || temWaNoSite;
+
+  // Widget de atendimento instalado = desqualificador quase total.
+  if (temWidget) {
+    score -= 60;
   } else {
-    if (lead.whatsapp) scores.alcancabilidade += 45;
-    else if (lead.telefone) scores.alcancabilidade += 20;
-
-    if (lead.instagram?.found) scores.alcancabilidade += 25;
-    if (lead.email) scores.alcancabilidade += 15;
-    if (lead.googleMapsUrl) scores.alcancabilidade += 10;
-
-    // CNPJ com telefone da Receita é confiável
-    if (lead.cnpj && lead.telefone) scores.alcancabilidade += 5;
+    score += 25; // ninguém resolveu o problema ainda
   }
 
-  scores.alcancabilidade = clamp(scores.alcancabilidade, 0, 100);
+  // Usa o canal certo, manualmente — é exatamente o gargalo que o produto ataca.
+  if (temWhatsapp) score += 20;
 
-  // ═══ TAMANHO (0-100) — multi-sinal ═══
-  scores.tamanho = estimateSize(lead);
+  // Site no ar: pré-requisito para detectar e para instalar.
+  if (temSiteVivo) score += 10;
+  else if (!lead.website) score -= 15; // sem site, o produto tem pouco onde atuar
 
-  // ═══ URGÊNCIA (0-100) — multi-sinal ═══
-  scores.urgencia = estimateUrgency(lead, reviewAnalysis, marketingStatus, config);
+  // Já investe em captação: entende custo por lead, não precisa ser convencido
+  // de que contato perdido custa dinheiro.
+  if (ws.hasGoogleAnalytics || ws.hasFacebookPixel) score += 10;
 
-  // ═══ CONFIANÇA (0-100) — qualidade dos dados ═══
-  scores.confianca = estimateConfidence(lead, reviewAnalysis);
+  // Formulário de contato = capta lead e responde manualmente.
+  if (ws.temFormulario) score += 5;
 
+  // Dor pública nas avaliações (demora/sem retorno) é o sinal mais forte.
+  if (reviewAnalysis.hasSchedulingPain) score += 20;
+  if (reviewAnalysis.hasSchedulingPraise) score -= 15; // já respondem bem
+
+  // Instagram ativo = mais um canal chegando na mesma pessoa.
+  if (lead.instagram?.found) score += 5;
+
+  // Vários canais sem integração = a dor de gestão que o produto centraliza.
+  if (marketingStatus.channelFragmentation) score += 10;
+
+  return clamp(score, 0, 100);
+}
+
+function finalizarQualificacao(lead, scores, reviewAnalysis, marketingStatus, config) {
   // ═══ SCORE FINAL (ponderado com confiança) ═══
   const rawScore = Math.round(
     scores.oportunidade * 0.35 +
@@ -373,16 +448,17 @@ function qualifyWithRulesV2(lead, config = null) {
  */
 function checkHardDisqualifiers(lead) {
   // Estabelecimento fechado permanentemente ou temporariamente
-  if (lead.business_status === 'CLOSED_PERMANENTLY') {
+  if (lead.businessStatus === 'CLOSED_PERMANENTLY') {
     return { motivo: 'Estabelecimento fechado permanentemente' };
   }
-  if (lead.business_status === 'CLOSED_TEMPORARILY') {
+  if (lead.businessStatus === 'CLOSED_TEMPORARILY') {
     return { motivo: 'Estabelecimento fechado temporariamente' };
   }
 
   // CNPJ com situação irregular
-  if (lead.cnpjStatus) {
-    const status = lead.cnpjStatus.toUpperCase();
+  const cnpjSituacao = lead.cnpjStatus || lead.situacao;
+  if (cnpjSituacao) {
+    const status = String(cnpjSituacao).toUpperCase();
     if (status.includes('BAIXADA')) {
       return { motivo: 'CNPJ baixado — empresa encerrada' };
     }
@@ -407,9 +483,13 @@ function checkHardDisqualifiers(lead) {
  * Estima tamanho do negócio usando múltiplos sinais
  * Avaliações Google > Seguidores Instagram > Porte CNPJ > Tempo de existência
  */
-function estimateSize(lead) {
+function estimateSize(lead, config = null) {
   let score = 0;
   let hasSignal = false;
+
+  // Faixa ideal de porte, por segmento. Default 50-200 (Bookou); arquitetura usa
+  // 15-300, conforme a tabela de ICP da estratégia da WinClick.
+  const [sweetMin, sweetMax] = config?.qualificacao?.sweetSpotAvaliacoes || [50, 200];
 
   // Sinal 1: avaliações Google Maps (mais confiável)
   if (lead.totalAvaliacoes > 0) {
@@ -421,9 +501,8 @@ function estimateSize(lead) {
     else if (lead.totalAvaliacoes >= 10) score = Math.max(score, 25);
     else score = Math.max(score, 15);
 
-    // Sweet spot: 50-200 avaliações — grande o suficiente para precisar de ferramentas,
-    // mas não enterprise. Bônus adicional.
-    if (lead.totalAvaliacoes >= 50 && lead.totalAvaliacoes <= 200) {
+    // Sweet spot: opera de verdade, sem ser grande demais. Bônus adicional.
+    if (lead.totalAvaliacoes >= sweetMin && lead.totalAvaliacoes <= sweetMax) {
       score = Math.min(100, score + 15);
     }
   }
@@ -489,8 +568,8 @@ function estimateUrgency(lead, reviewAnalysis, marketingStatus, config = null) {
   // Sinal 1: dores explícitas em reviews — usa weightedPainCount se disponível
   const schedulingPainKeys = config ? config.analise.schedulingPainKeys : ['fila', 'agendamento', 'lotado'];
   let painCount;
-  if (reviewAnalysis.weightedPainCount !== undefined) {
-    painCount = reviewAnalysis.weightedPainCount;
+  if (reviewAnalysis.schedulingPainWeighted !== undefined) {
+    painCount = reviewAnalysis.schedulingPainWeighted;
   } else {
     painCount = schedulingPainKeys.reduce(
       (sum, key) => sum + (reviewAnalysis.painCounts?.[key] || 0), 0
@@ -505,16 +584,16 @@ function estimateUrgency(lead, reviewAnalysis, marketingStatus, config = null) {
   if (reviewAnalysis.hasOrganizationIssues) score += 15;
 
   // Sinal 3: dono menciona agendamento manual nas respostas = SINAL DE OURO
-  if (reviewAnalysis.ownerMentionsScheduling) score += 30;
+  if (reviewAnalysis.ownerMentionsManualScheduling) score += 30;
 
   // Sinal 4: velocidade de reviews alta = crescendo rápido, precisa de ferramentas urgente
-  if (reviewAnalysis.reviewVelocity > 1.5) score += 20;
+  if (reviewAnalysis.velocityRatio > 1.5) score += 20;
 
   // Sinal 5: distribuição bimodal = caos operacional (clientes adoram OU odeiam)
   if (reviewAnalysis.bimodalDistribution) score += 15;
 
   // Sinal 6: dor de no-show = problema de agendamento explícito
-  if (reviewAnalysis.noShowPain) score += 20;
+  if (reviewAnalysis.hasNoshowChaos) score += 20;
 
   // Sinal 7: sem presença digital nenhuma (urgente digitalizar)
   if (!lead.website && !lead.instagram?.found) score += 20;
@@ -585,7 +664,7 @@ function estimateConfidence(lead, reviewAnalysis = {}) {
   if (lead.reviews && lead.reviews.length > 0) score += 5;
 
   // Dono digitalmente engajado (responde avaliações) = negócio ativo e receptivo
-  if (reviewAnalysis.ownerResponds) score += 10;
+  if (reviewAnalysis.ownerRespondsToReviews) score += 10;
 
   // Investe em analytics = negócio real com presença digital intencional
   if (lead.websiteAnalysis?.hasGoogleAnalytics || lead.websiteAnalysis?.hasFacebookPixel) score += 10;
@@ -611,9 +690,9 @@ function buildTags(lead, scores, reviewAnalysis, marketingStatus) {
 
   // Novas tags de review analysis
   if (reviewAnalysis.bimodalDistribution) tags.push('BIMODAL_REVIEWS');
-  if (reviewAnalysis.noShowPain) tags.push('NO_SHOW_PAIN');
-  if (reviewAnalysis.ownerMentionsScheduling) tags.push('AGENDA_MANUAL');
-  if (reviewAnalysis.reviewVelocity > 1.5) tags.push('CRESCIMENTO_RAPIDO');
+  if (reviewAnalysis.hasNoshowChaos) tags.push('NO_SHOW_PAIN');
+  if (reviewAnalysis.ownerMentionsManualScheduling) tags.push('AGENDA_MANUAL');
+  if (reviewAnalysis.velocityRatio > 1.5) tags.push('CRESCIMENTO_RAPIDO');
 
   // Sweet spot de tamanho
   if (lead.totalAvaliacoes >= 50 && lead.totalAvaliacoes <= 200) tags.push('SWEET_SPOT_SIZE');
@@ -667,12 +746,12 @@ function buildDores(lead, reviewAnalysis, marketingStatus, config = null) {
   }
 
   // Dono menciona agendamento manual = dor direta e explícita
-  if (reviewAnalysis.ownerMentionsScheduling) {
+  if (reviewAnalysis.ownerMentionsManualScheduling) {
     dores.push('Dono confirma agendamento manual nas respostas — processo caótico');
   }
 
   // No-show pain
-  if (reviewAnalysis.noShowPain) {
+  if (reviewAnalysis.hasNoshowChaos) {
     dores.push('Dor com no-show / ausências sem aviso — precisa de confirmação automática');
   }
 
@@ -892,7 +971,7 @@ function recommendPlan(lead, reviewAnalysis = {}, marketingStatus = {}) {
   }
 
   // Profissional: negócios maiores com múltiplos sinais
-  const reviewVelocityHigh = reviewAnalysis.reviewVelocity > 15; // >15 reviews/mês
+  const reviewVelocityHigh = reviewAnalysis.velocityRatio > 15; // >15 reviews/mês
   const manyFollowers = lead.instagram?.seguidores >= 5000;
   const isEPPPlus = lead.porte && (lead.porte.toUpperCase().includes('EPP') || lead.porte.toUpperCase().includes('DEMAIS'));
   const manyReviews = lead.totalAvaliacoes > 80;
@@ -910,7 +989,7 @@ function recommendPlan(lead, reviewAnalysis = {}, marketingStatus = {}) {
  */
 function estimateStaff(lead) {
   // Baseado em review velocity e horários
-  const velocity = lead.reviewAnalysis?.reviewVelocity;
+  const velocity = lead.reviewAnalysis?.velocityRatio;
   const diasAbertos = (lead.horarios || []).filter(h => !/fechado/i.test(h)).length;
 
   if (!velocity && !diasAbertos) return null;

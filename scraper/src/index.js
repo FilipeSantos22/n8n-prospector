@@ -42,6 +42,9 @@ const { getCache } = require('./cache');
 const { getSeenRegistry } = require('./discovery/seen-registry');
 const { pMap } = require('./utils/concurrency');
 
+// Outreach
+const { getLeadStatus, STATUSES } = require('./outreach/lead-status');
+
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -225,17 +228,25 @@ app.post('/api/v2/discover', async (req, res) => {
       // Gerar grid
       let grid = generateGrid(city, state, radiusKm || 3);
 
-      // Se não tem bounds pré-configurados, fazer geocoding
+      // Sem bounds cadastrados: geocodifica e monta o grid a partir do VIEWPORT
+      // devolvido pelo Google. A versão anterior descartava o viewport e caía
+      // num único ponto — cobertura de ~60 resultados para a cidade inteira,
+      // sem nenhum aviso de que a busca tinha sido degradada.
       if (grid.needsGeocoding) {
         console.log(`[Discovery] Geocoding para ${city}/${state}...`);
         const geo = await geocodeCity(city, state, googleKey);
-        if (geo) {
-          grid = generateGrid(city, state, radiusKm || 3);
-          if (grid.needsGeocoding) {
-            grid.points = [geo.center];
-            grid.radiusMeters = 10000;
-          }
+        if (geo?.bounds) {
+          grid = generateGrid(city, state, radiusKm || 3, geo.bounds);
+          console.log(`[Discovery] Grid via viewport do geocoding: ${grid.points.length} pontos`);
+        } else {
+          console.error(`[Discovery] ❌ Geocoding falhou para "${city}/${state}". Cidade ignorada — verifique o nome (acentuação/encoding) ou cadastre os bounds.`);
+          continue;
         }
+      }
+
+      if (!grid.points || grid.points.length === 0) {
+        console.error(`[Discovery] ❌ Grid vazio para "${city}/${state}". Cidade ignorada.`);
+        continue;
       }
 
       // Busca combinada: Nearby (grid) + Text Search
@@ -294,25 +305,79 @@ app.post('/api/v2/discover', async (req, res) => {
 });
 
 // ── FASE 2: PRE-FILTER ──
+// Filtro determinístico, custo zero de IA. Devolve contadores por regra: se o
+// funil estiver matando quase tudo, é preciso saber QUAL regra está errada
+// antes de culpar a fonte.
 app.post('/api/v2/prefilter', async (req, res) => {
   try {
-    const { leads, minReviews = 5, minRating = 0 } = req.body;
+    const {
+      leads,
+      minReviews = 5,
+      minRating = 0,
+      maxReviews = 500,
+      segmentId,
+      tenantId = 'default',
+    } = req.body;
     if (!leads || !Array.isArray(leads)) {
       return res.status(400).json({ error: 'leads é obrigatório (array)' });
     }
 
-    const before = leads.length;
-    const filtered = leads.filter(lead => {
-      if (lead.businessStatus === 'CLOSED_PERMANENTLY') return false;
-      // Leads da Receita Federal e Instagram não têm avaliações — não filtrar por reviews
-      const fromAltSource = ['receita_federal', 'google_search', 'instagram_search'].includes(lead.source);
-      if (!fromAltSource && lead.totalAvaliacoes < minReviews) return false;
-      if (lead.rating > 0 && lead.rating < minRating) return false;
-      return true;
-    });
+    const config = getConfig(segmentId);
+    const leadStatus = getLeadStatus();
 
-    console.log(`[PreFilter] ${before} → ${filtered.length} leads (removidos: ${before - filtered.length})`);
-    res.json({ total: filtered.length, removed: before - filtered.length, leads: filtered });
+    // ═══ PRIMEIRO DE TODOS: nao_perturbe / cliente ═══
+    // Precisa ser aqui, na entrada — quem pediu para não ser contatado não pode
+    // sequer entrar no funil de nenhuma execução futura.
+    const terminais = leadStatus.filtrarTerminais(leads, tenantId);
+
+    const excluirNomes = config.analise?.excluirNomes || null;
+    const ALT_SOURCES = ['receita_federal', 'google_search', 'instagram_search'];
+
+    const funil = {
+      entrada: leads.length,
+      descartado_status_terminal: terminais.removidos,
+      descartado_fechado: 0,
+      descartado_sem_contato: 0,
+      descartado_poucas_avaliacoes: 0,
+      descartado_porte_grande: 0,
+      descartado_rede_franquia: 0,
+      descartado_rating_baixo: 0,
+      aprovado: 0,
+    };
+
+    const aprovados = [];
+    const descartados = [];
+
+    for (const lead of terminais.leads) {
+      const fromAltSource = ALT_SOURCES.includes(lead.source);
+      let motivo = null;
+
+      if (lead.businessStatus === 'CLOSED_PERMANENTLY') motivo = 'fechado_permanente';
+      else if (lead.businessStatus === 'CLOSED_TEMPORARILY') motivo = 'fechado_temporario';
+      else if (!lead.telefone && !lead.website && !lead.whatsapp && !lead.instagram?.found) motivo = 'sem_contato';
+      else if (!fromAltSource && lead.totalAvaliacoes < minReviews) motivo = 'poucas_avaliacoes';
+      else if (maxReviews > 0 && lead.totalAvaliacoes > maxReviews) motivo = 'porte_grande';
+      else if (excluirNomes && excluirNomes.test(lead.nome || '')) motivo = 'rede_franquia';
+      else if (minRating > 0 && lead.rating > 0 && lead.rating < minRating) motivo = 'rating_baixo';
+
+      if (motivo) {
+        funil[`descartado_${motivo === 'fechado_permanente' || motivo === 'fechado_temporario' ? 'fechado' : motivo}`]++;
+        descartados.push({ ...lead, motivo_descarte: motivo });
+      } else {
+        funil.aprovado++;
+        aprovados.push(lead);
+      }
+    }
+
+    console.log(`[PreFilter] ${leads.length} → ${aprovados.length} leads`, funil);
+    res.json({
+      total: aprovados.length,
+      removed: leads.length - aprovados.length,
+      funil,
+      statusTerminalPorTipo: terminais.porStatus,
+      leads: aprovados,
+      descartados,
+    });
   } catch (err) {
     console.error('[PreFilter] Erro:', err);
     res.status(500).json({ error: err.message });
@@ -543,7 +608,10 @@ app.post('/api/v2/qualify', async (req, res) => {
 // ════════════════════════════════════════════════════
 app.post('/api/v2/pipeline', async (req, res) => {
   try {
-    const { cities, minReviews = 5, minRating = 0, radiusKm = 5, segmentId, newOnly = false, tenantId = 'default' } = req.body;
+    const {
+      cities, minReviews = 5, minRating = 0, maxReviews = 500, radiusKm = 5,
+      segmentId, newOnly = false, tenantId = 'default', dryRun = false,
+    } = req.body;
 
     const config = getConfig(segmentId);
     const storage = getStorage();
@@ -551,6 +619,7 @@ app.post('/api/v2/pipeline', async (req, res) => {
     console.log('\n' + '█'.repeat(60));
     console.log(`█  ${config.produto.nome.toUpperCase()} LEAD PROSPECTOR v2 — PIPELINE [${config.nome}]`);
     if (newOnly) console.log('█  MODO: Incremental (somente leads novos)');
+    if (dryRun) console.log('█  MODO: DRY RUN — nada será gravado nem enviado');
     console.log('█'.repeat(60));
 
     const citiesWithRadius = cities.map(c => ({ ...c, radiusKm }));
@@ -563,7 +632,8 @@ app.post('/api/v2/pipeline', async (req, res) => {
     // FASE 2: PRE-FILTER
     console.log('\n🔽 FASE 2: Pre-filter...');
     const filterRes = await axios.post(`http://localhost:${PORT}/api/v2/prefilter`, {
-      leads: discoverRes.data.leads, minReviews, minRating,
+      leads: discoverRes.data.leads, minReviews, minRating, maxReviews,
+      segmentId: config.id, tenantId,
     }, { timeout: 60000 });
     console.log(`✅ ${filterRes.data.total} leads após filtro (removidos: ${filterRes.data.removed})`);
 
@@ -582,26 +652,54 @@ app.post('/api/v2/pipeline', async (req, res) => {
     const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
 
-    // Marcar leads como vistos (para incremental discovery futuro)
-    const seenRegistry = getSeenRegistry();
-    const marked = seenRegistry.markSeen(qualifyRes.data.leads, tenantId);
-    console.log(`[SeenRegistry] ${marked} novos leads registrados`);
-
-    // EXPORT EXCEL
-    console.log('\n📄 Exportando Excel...');
-    const excelPath = await exportToExcel(qualifyRes.data.leads, cities, config);
-    console.log(`✅ ${excelPath}`);
-
-    // SAVE via storage
-    console.log('\n💾 Salvando dashboard...');
-    const meta = {
-      cities: cities.map(c => `${c.city}/${c.state}`).join(', '),
-      date: new Date().toISOString(),
-      total: qualifyRes.data.total,
-      version: 'v2',
-      segment: config.id,
+    // ═══ FUNIL CONSOLIDADO ═══
+    const funil = {
+      descoberto: discoverRes.data.total,
+      ja_conhecidos_ignorados: discoverRes.data.skippedKnown || 0,
+      ...filterRes.data.funil,
+      enriquecido: enrichRes.data.total,
+      qualificado: qualifyRes.data.total,
+      quentes: qualifyRes.data.resumo.quentes,
+      mornos: qualifyRes.data.resumo.mornos,
+      frios: qualifyRes.data.resumo.frios,
     };
-    storage.saveLeads('latest', qualifyRes.data.leads, { ...meta, resumo: qualifyRes.data.resumo }, tenantId);
+
+    let excelPath = null;
+
+    if (dryRun) {
+      console.log('\n⚠️  DRY RUN — pulando gravação (seen-registry, lead-status, Excel, dashboard)');
+    } else {
+      // Marcar leads como vistos (para incremental discovery futuro)
+      const seenRegistry = getSeenRegistry();
+      const marked = seenRegistry.markSeen(qualifyRes.data.leads, tenantId);
+      console.log(`[SeenRegistry] ${marked} novos leads registrados`);
+
+      // Registrar status de abordagem (Estágio 5) — só cria os que ainda não existem,
+      // preservando quem já está abordado/nao_perturbe/cliente.
+      const leadStatus = getLeadStatus();
+      const novos = leadStatus.registrarNovos(qualifyRes.data.leads, tenantId);
+      console.log(`[LeadStatus] ${novos} leads registrados como "novo"`);
+
+      // EXPORT EXCEL
+      console.log('\n📄 Exportando Excel...');
+      excelPath = await exportToExcel(
+        qualifyRes.data.leads, cities, config,
+        { descartados: filterRes.data.descartados || [], funil, tenantId }
+      );
+      console.log(`✅ ${excelPath}`);
+
+      // SAVE via storage
+      console.log('\n💾 Salvando dashboard...');
+      const meta = {
+        cities: cities.map(c => `${c.city}/${c.state}`).join(', '),
+        date: new Date().toISOString(),
+        total: qualifyRes.data.total,
+        version: 'v2',
+        segment: config.id,
+        funil,
+      };
+      storage.saveLeads('latest', qualifyRes.data.leads, { ...meta, resumo: qualifyRes.data.resumo }, tenantId);
+    }
 
     // RESUMO
     const r = qualifyRes.data.resumo;
@@ -617,9 +715,13 @@ app.post('/api/v2/pipeline', async (req, res) => {
     console.log(`█  🌐 Sem site: ${r.semSite}`);
     console.log(`█  ⚔️  Concorrente: ${r.usaConcorrente}`);
     if (r.comDorAgendamento) console.log(`█  🚨 Reclamam fila: ${r.comDorAgendamento}`);
+    console.log('█  ── FUNIL ──');
+    for (const [etapa, valor] of Object.entries(funil)) {
+      console.log(`█    ${etapa.padEnd(30)} ${valor}`);
+    }
     console.log('█'.repeat(60));
 
-    res.json({ ...qualifyRes.data, excelPath });
+    res.json({ ...qualifyRes.data, funil, dryRun, excelPath });
   } catch (err) {
     console.error('[Pipeline v2] Erro:', err.message);
     res.status(500).json({ error: err.message });
@@ -796,8 +898,10 @@ app.post('/api/pipeline', async (req, res) => {
 // ════════════════════════════════════════════════════
 // EXPORT EXCEL
 // ════════════════════════════════════════════════════
-async function exportToExcel(leads, cities, config = null) {
+async function exportToExcel(leads, cities, config = null, extras = {}) {
   if (!config) config = getConfig();
+  const { descartados = [], funil = null, tenantId = 'default' } = extras;
+  const leadStatus = getLeadStatus();
 
   const workbook = new ExcelJS.Workbook();
   workbook.creator = `${config.produto.nome} Lead Prospector v2`;
@@ -839,7 +943,9 @@ async function exportToExcel(leads, cities, config = null) {
     { header: 'MELHOR HORÁRIO', key: 'melhorHorario', width: 20 },
     { header: 'RISCO', key: 'risco', width: 10 },
     { header: 'GOOGLE MAPS', key: 'googleMaps', width: 30 },
-    { header: 'CONTATO', key: 'contatoFeito', width: 10 },
+    { header: 'STATUS ABORDAGEM', key: 'statusAbordagem', width: 18 },
+    { header: 'DATA COLETA', key: 'dataColeta', width: 14 },
+    { header: 'DATA ABORDAGEM', key: 'dataAbordagem', width: 16 },
     { header: 'RESULTADO', key: 'resultado', width: 20 },
     { header: 'OBS', key: 'obs', width: 30 },
   ];
@@ -847,6 +953,7 @@ async function exportToExcel(leads, cities, config = null) {
   ws.getRow(1).eachCell(cell => { Object.assign(cell, headerStyle); });
   ws.getRow(1).height = 25;
 
+  const hoje = new Date().toISOString().slice(0, 10);
   let prioridade = 1;
   for (const lead of leads) {
     const q = lead.qualification || {};
@@ -879,7 +986,9 @@ async function exportToExcel(leads, cities, config = null) {
       melhorHorario: q.melhor_horario_contato || '',
       risco: q.risco || '',
       googleMaps: lead.googleMapsUrl || '',
-      contatoFeito: 'Não',
+      statusAbordagem: leadStatus.get(lead, tenantId)?.status || 'novo',
+      dataColeta: hoje,
+      dataAbordagem: (leadStatus.get(lead, tenantId)?.dataAbordagem || '').slice(0, 10),
       resultado: '',
       obs: '',
     });
@@ -893,8 +1002,85 @@ async function exportToExcel(leads, cities, config = null) {
     prioridade++;
   }
 
-  ws.autoFilter = { from: 'A1', to: `AD${leads.length + 1}` };
+  ws.autoFilter = { from: 'A1', to: `AF${leads.length + 1}` };
   ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+  // ── ABA: PARA REVISAR (fila de abordagem — Estágio 6) ──
+  // O spec é explícito: nada é enviado automaticamente. Esta aba é a fila que
+  // você aprova antes de qualquer contato.
+  const wsFila = workbook.addWorksheet('Para Revisar');
+  wsFila.columns = [
+    { header: 'OK?', key: 'aprovar', width: 6 },
+    { header: 'SCORE', key: 'score', width: 8 },
+    { header: 'NOME', key: 'nome', width: 32 },
+    { header: 'CIDADE', key: 'cidade', width: 16 },
+    { header: 'WHATSAPP', key: 'whatsapp', width: 20 },
+    { header: 'WEBSITE', key: 'website', width: 28 },
+    { header: 'TEM WIDGET?', key: 'widget', width: 16 },
+    { header: 'GANCHO', key: 'gancho', width: 40 },
+    { header: 'MENSAGEM PARA ENVIAR', key: 'mensagem', width: 70 },
+  ];
+  wsFila.getRow(1).eachCell(cell => { Object.assign(cell, headerStyle); });
+  wsFila.getRow(1).height = 25;
+
+  const SCORE_CORTE = parseInt(process.env.OUTREACH_SCORE_MIN || '60');
+  const fila = leads
+    .filter(l => (l.qualification?.score || 0) >= SCORE_CORTE)
+    .filter(l => l.whatsapp || l.telefone)
+    .filter(l => {
+      const st = leadStatus.get(l, tenantId)?.status;
+      return !st || st === 'novo';
+    });
+
+  for (const lead of fila) {
+    const q = lead.qualification || {};
+    const comp = lead.websiteAnalysis?.competitorsFound || [];
+    const row = wsFila.addRow({
+      aprovar: '',
+      score: q.score || 0,
+      nome: lead.nome,
+      cidade: lead.cidade || '',
+      whatsapp: lead.whatsapp ? `https://wa.me/${lead.whatsapp}` : (lead.telefone || ''),
+      website: lead.website || 'NÃO TEM',
+      widget: comp.length ? comp.join(', ') : 'não',
+      gancho: q.argumento_principal || '',
+      mensagem: q.mensagem_whatsapp || '',
+    });
+    row.eachCell(cell => { cell.alignment = { vertical: 'top', wrapText: true }; });
+  }
+  wsFila.views = [{ state: 'frozen', ySplit: 1 }];
+
+  // ── ABA: DESCARTADOS (auditoria do funil) ──
+  // "Grave todos, inclusive os descartados, com o motivo. Quero auditar o
+  // funil, não só ver os aprovados."
+  const wsDesc = workbook.addWorksheet('Descartados');
+  wsDesc.columns = [
+    { header: 'MOTIVO', key: 'motivo', width: 24 },
+    { header: 'NOME', key: 'nome', width: 32 },
+    { header: 'CIDADE', key: 'cidade', width: 16 },
+    { header: 'ENDEREÇO', key: 'endereco', width: 38 },
+    { header: 'AVALIAÇÕES', key: 'avaliacoes', width: 12 },
+    { header: 'RATING', key: 'rating', width: 8 },
+    { header: 'TELEFONE', key: 'telefone', width: 18 },
+    { header: 'WEBSITE', key: 'website', width: 28 },
+    { header: 'FONTE', key: 'fonte', width: 16 },
+  ];
+  wsDesc.getRow(1).eachCell(cell => { Object.assign(cell, headerStyle); });
+  for (const d of descartados) {
+    wsDesc.addRow({
+      motivo: d.motivo_descarte || '',
+      nome: d.nome || '',
+      cidade: d.cidade || '',
+      endereco: d.endereco || '',
+      avaliacoes: d.totalAvaliacoes || 0,
+      rating: d.rating || 0,
+      telefone: d.telefone || '',
+      website: d.website || '',
+      fonte: d.source || '',
+    });
+  }
+  wsDesc.autoFilter = { from: 'A1', to: `I${descartados.length + 1}` };
+  wsDesc.views = [{ state: 'frozen', ySplit: 1 }];
 
   // ── ABA 2: MENSAGENS ──
   const wsMsgs = workbook.addWorksheet('Mensagens');
@@ -944,6 +1130,17 @@ async function exportToExcel(leads, cities, config = null) {
   wsResumo.addRow(['Reclamam de fila/espera', leads.filter(l => l.reviewAnalysis?.hasSchedulingPain).length]);
   wsResumo.addRow(['Usa concorrente', leads.filter(l => l.websiteAnalysis?.usaConcorrente).length]);
   wsResumo.addRow(['Marketing abandonado', leads.filter(l => l.marketingStatus?.instagramStatus === 'abandonado').length]);
+  wsResumo.addRow([]);
+  wsResumo.addRow(['FILA DE ABORDAGEM']);
+  wsResumo.addRow([`Aguardando revisão (score >= ${SCORE_CORTE})`, fila.length]);
+
+  if (funil) {
+    wsResumo.addRow([]);
+    wsResumo.addRow(['FUNIL — onde os leads foram perdidos']);
+    for (const [etapa, valor] of Object.entries(funil)) {
+      wsResumo.addRow([etapa.replace(/_/g, ' '), valor]);
+    }
+  }
 
   wsResumo.getColumn(1).width = 30;
   wsResumo.getColumn(2).width = 15;
@@ -1194,6 +1391,18 @@ app.post('/api/whatsapp/webhook', async (req, res) => {
     for (const action of result.actions) {
       if (action === 'blocklist') {
         conversationStore.addToBlocklist(phone);
+        // Opt-out precisa valer para SEMPRE, em qualquer execução futura do
+        // pipeline — a blocklist da conversa só cobre o WhatsApp. O lead-status
+        // é o que o pre-filter consulta na entrada do Estágio 2.
+        try {
+          getLeadStatus().naoPerturbe(
+            { whatsapp: phone, telefone: phone, nome: convo?.leadName || '', cidade: '' },
+            'opt-out na conversa de WhatsApp'
+          );
+          console.log(`[LeadStatus] ${phone} marcado como nao_perturbe (opt-out)`);
+        } catch (e) {
+          console.error('[LeadStatus] Falha ao marcar nao_perturbe:', e.message);
+        }
       }
       if (action === 'increment_objection') {
         const c = conversationStore.getConversation(phone);
@@ -1342,6 +1551,97 @@ app.post('/api/followups/send', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ════════════════════════════════════════════════════
+// OUTREACH — Fila de abordagem (Estágio 6)
+//
+// NÃO dispara. Monta a fila priorizada com a mensagem pronta para revisão
+// humana; o envio só acontece depois da aprovação explícita.
+// ════════════════════════════════════════════════════
+
+app.get('/api/outreach/queue', (req, res) => {
+  try {
+    const tenantId = req.query.tenantId || 'default';
+    const scoreMin = parseInt(req.query.scoreMin || '60');
+    const limite = parseInt(req.query.limite || '20');
+
+    const data = getStorage().getLatestLeads(tenantId);
+    const leadStatus = getLeadStatus();
+
+    const elegiveis = (data.leads || []).filter(lead => {
+      if ((lead.qualification?.score || 0) < scoreMin) return false;
+      if (!lead.whatsapp && !lead.telefone) return false;
+      const st = leadStatus.get(lead, tenantId)?.status;
+      return !st || st === 'novo'; // nunca abordado
+    });
+
+    const fila = elegiveis
+      .sort((a, b) => (b.qualification?.score || 0) - (a.qualification?.score || 0))
+      .slice(0, limite)
+      .map(lead => ({
+        place_id: lead.place_id || null,
+        nome: lead.nome,
+        cidade: lead.cidade || '',
+        score: lead.qualification?.score || 0,
+        classificacao: lead.qualification?.classificacao || '',
+        tags: lead.qualification?.tags || [],
+        whatsapp: lead.whatsapp || '',
+        telefone: lead.telefone || '',
+        website: lead.website || '',
+        usaConcorrente: lead.websiteAnalysis?.competitorsFound || [],
+        dores: lead.qualification?.dores_provaveis || [],
+        gancho: lead.qualification?.argumento_principal || '',
+        mensagem: lead.qualification?.mensagem_whatsapp || '',
+      }));
+
+    res.json({
+      elegiveis: elegiveis.length,
+      naFila: fila.length,
+      scoreMin,
+      limite,
+      janelaEnvio: rateLimiter.canSendNow(),
+      fila,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * Confirma que um lead foi abordado. Só chame DEPOIS do envio confirmado —
+ * o spec é explícito: data_abordagem só é gravada após a confirmação.
+ */
+app.post('/api/outreach/status', (req, res) => {
+  try {
+    const { place_id, telefone, whatsapp, nome, cidade, status, motivo, tenantId = 'default' } = req.body;
+    if (!status) return res.status(400).json({ error: `status é obrigatório. Válidos: ${STATUSES.join(', ')}` });
+    if (!place_id && !telefone && !whatsapp && !nome) {
+      return res.status(400).json({ error: 'informe place_id, telefone, whatsapp ou nome+cidade' });
+    }
+
+    const leadStatus = getLeadStatus();
+    const lead = { place_id, telefone, whatsapp, nome, cidade };
+    const registro = status === 'nao_perturbe'
+      ? leadStatus.naoPerturbe(lead, motivo || 'pedido do contato', tenantId)
+      : leadStatus.set(lead, status, motivo ? { motivo } : {}, tenantId);
+
+    res.json({ ok: true, registro });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/outreach/stats', (req, res) => {
+  const tenantId = req.query.tenantId || 'default';
+  res.json(getLeadStatus().stats(tenantId));
+});
+
+app.get('/api/outreach/leads', (req, res) => {
+  const tenantId = req.query.tenantId || 'default';
+  const { status } = req.query;
+  const registros = getLeadStatus().listar(status || null, tenantId);
+  res.json({ total: registros.length, status: status || 'todos', registros });
 });
 
 // ════════════════════════════════════════════════════

@@ -21,6 +21,7 @@ const CITY_BOUNDS = {
   'uberlandia-mg': { north: -18.86, south: -18.98, east: -48.22, west: -48.32, center: { lat: -18.9186, lng: -48.2772 } },
   'anapolis-go': { north: -16.28, south: -16.38, east: -48.92, west: -49.02, center: { lat: -16.3281, lng: -48.9530 } },
   'aparecida-de-goiania-go': { north: -16.71, south: -16.84, east: -49.20, west: -49.32, center: { lat: -16.8198, lng: -49.2469 } },
+  'palmas-to': { north: -10.13, south: -10.35, east: -48.28, west: -48.38, center: { lat: -10.1849, lng: -48.3336 } },
 };
 
 /**
@@ -30,18 +31,25 @@ const CITY_BOUNDS = {
  * @param {number} radiusKm - Raio de busca em km (default 3)
  * @returns {{ points: Array, bounds: Object, radiusMeters: number }}
  */
-function generateGrid(city, state, radiusKm = 3) {
+function generateGrid(city, state, radiusKm = 3, boundsOverride = null) {
   const key = normalizeKey(city, state);
-  const bounds = CITY_BOUNDS[key];
+  const bounds = boundsOverride || CITY_BOUNDS[key];
 
   if (!bounds) {
-    // Fallback: gera grid simples ao redor do centro estimado
-    console.warn(`[Grid] Bounds não encontrados para ${city}/${state}, usando busca centralizada`);
+    // Sem bounds conhecidos. NÃO devolvemos um ponto só: quem chamou precisa
+    // geocodificar e voltar aqui passando o viewport em `boundsOverride`.
+    // Um único ponto cobre no máximo ~60 resultados para a cidade inteira e
+    // falha silenciosamente — o pipeline parece ter rodado e não trouxe nada.
+    console.warn(
+      `[Grid] ⚠️  Bounds não cadastrados para "${city}/${state}" (chave: "${key}"). ` +
+      `Vou depender do geocoding. Se a cidade for recorrente, cadastre em CITY_BOUNDS.`
+    );
     return {
-      points: [{ lat: 0, lng: 0 }], // será substituído por geocoding
+      points: [],
       bounds: null,
       radiusMeters: radiusKm * 1000,
       needsGeocoding: true,
+      key,
     };
   }
 
