@@ -25,6 +25,7 @@ const { analyzeMarketingStatus } = require('./analysis/marketing');
 // Utils
 const { generateGrid, geocodeCity } = require('./utils/grid');
 const { extractWhatsApp } = require('./utils/phone');
+const { classificarLinkDoSite } = require('./utils/website');
 const { deduplicateLeads } = require('./utils/dedup');
 
 // Qualifier
@@ -432,6 +433,18 @@ app.post('/api/v2/enrich', async (req, res) => {
             phone: details.telefone,
             phoneInternational: details.telefoneInternacional,
           });
+        }
+      }
+
+      // Instagram/wa.me/Linktree/portal no campo "site" não é site próprio — ver utils/website.js.
+      // O link não se perde: vira handle de Instagram ou WhatsApp quando dá.
+      if (enrichedLead.website) {
+        const link = classificarLinkDoSite(enrichedLead.website);
+        if (!link.proprio) {
+          enrichedLead.linkSemSite = { url: enrichedLead.website, tipo: link.tipo };
+          enrichedLead.website = null;
+          if (link.instagramHandle && !enrichedLead.instagramHandle) enrichedLead.instagramHandle = link.instagramHandle;
+          if (link.whatsapp && !enrichedLead.whatsapp) enrichedLead.whatsapp = link.whatsapp;
         }
       }
 
@@ -948,6 +961,11 @@ async function exportToExcel(leads, cities, config = null, extras = {}) {
     { header: 'DATA ABORDAGEM', key: 'dataAbordagem', width: 16 },
     { header: 'RESULTADO', key: 'resultado', width: 20 },
     { header: 'OBS', key: 'obs', width: 30 },
+    // Colunas para importar no Automação IA: número puro (a coluna WHATSAPP é link
+    // wa.me, para clicar) e a chave de dedup — reimportar a mesma planilha atualiza
+    // em vez de duplicar.
+    { header: 'WHATSAPP NÚMERO', key: 'whatsappNumero', width: 16 },
+    { header: 'CHAVE EXTERNA', key: 'chaveExterna', width: 30 },
   ];
 
   ws.getRow(1).eachCell(cell => { Object.assign(cell, headerStyle); });
@@ -991,6 +1009,8 @@ async function exportToExcel(leads, cities, config = null, extras = {}) {
       dataAbordagem: (leadStatus.get(lead, tenantId)?.dataAbordagem || '').slice(0, 10),
       resultado: '',
       obs: '',
+      whatsappNumero: lead.whatsapp || '',
+      chaveExterna: lead.place_id ? `gmaps:${lead.place_id}` : (lead.cnpj ? `cnpj:${lead.cnpj}` : ''),
     });
 
     const colors = { 'QUENTE': 'FFFFE0E0', 'MORNO': 'FFFFF3CD', 'FRIO': 'FFE0E8FF' };
@@ -1002,7 +1022,7 @@ async function exportToExcel(leads, cities, config = null, extras = {}) {
     prioridade++;
   }
 
-  ws.autoFilter = { from: 'A1', to: `AF${leads.length + 1}` };
+  ws.autoFilter = { from: 'A1', to: `AH${leads.length + 1}` };
   ws.views = [{ state: 'frozen', ySplit: 1 }];
 
   // ── ABA: PARA REVISAR (fila de abordagem — Estágio 6) ──

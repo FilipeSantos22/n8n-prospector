@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { consumir } = require('../utils/google-budget');
 
 // ════════════════════════════════════════════════════
 // PLACES API (NEW) — places.googleapis.com/v1
@@ -88,6 +89,8 @@ async function searchText(textQuery, apiKey, opts = {}) {
     if (rectangle) body.locationRestriction = { rectangle };
     if (includedType) body.includedType = includedType;
     if (pageToken) body.pageToken = pageToken;
+
+    if (!consumir('busca')) break;
 
     try {
       const { data } = await axios.post(`${PLACES_BASE}/places:searchText`, body, {
@@ -232,6 +235,7 @@ async function combinedSearch(city, state, gridPoints, radiusMeters, apiKey, con
  * @param {string} apiKey
  */
 async function getPlaceDetails(placeId, apiKey) {
+  if (!consumir('detalhes')) return null;
   try {
     const { data } = await axios.get(`${PLACES_BASE}/places/${encodeURIComponent(placeId)}`, {
       headers: {

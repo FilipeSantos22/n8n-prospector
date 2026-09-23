@@ -85,6 +85,7 @@ function generateGrid(city, state, radiusKm = 3, boundsOverride = null) {
  */
 async function geocodeCity(city, state, apiKey) {
   const axios = require('axios');
+  if (!require('./google-budget').consumir('geocoding')) return null;
   try {
     const { data } = await axios.get('https://maps.googleapis.com/maps/api/geocode/json', {
       params: {

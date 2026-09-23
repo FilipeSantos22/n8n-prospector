@@ -1,0 +1,70 @@
+{
+  "name": "WinClick - Prospecção Veículos (Goiás)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger",
+      "name": "Iniciar Prospecção",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══ Prospecção de locadoras e revendas de carros/motos — Goiás ═══\n// Ver docs/prospeccao-veiculos.md.\n//\n// Rode UMA fase por vez e confira o consumo no Google Cloud Console antes da\n// próxima: o limite é o tier gratuito da Places API (New).\n// Sem envio de WhatsApp aqui: quem dispara é o Automação IA, depois da revisão.\n\nconst FASE = 1;          // troque para avançar\nconst DRY_RUN = false;   // true = roda tudo, mas não grava Excel/registro de vistos\n\nconst FASES = {\n  1: [ // Grande Goiânia\n    { city: 'Goiânia', state: 'GO', radiusKm: 3 },\n    { city: 'Aparecida de Goiânia', state: 'GO', radiusKm: 3 },\n    { city: 'Senador Canedo', state: 'GO', radiusKm: 3 },\n    { city: 'Trindade', state: 'GO', radiusKm: 3 },\n    { city: 'Goianira', state: 'GO', radiusKm: 3 },\n  ],\n  2: [ // Polos do interior\n    { city: 'Anápolis', state: 'GO', radiusKm: 3 },\n    { city: 'Rio Verde', state: 'GO', radiusKm: 3 },\n    { city: 'Jataí', state: 'GO', radiusKm: 3 },\n    { city: 'Itumbiara', state: 'GO', radiusKm: 3 },\n    { city: 'Catalão', state: 'GO', radiusKm: 3 },\n  ],\n  3: [ // Turismo — bom para locadora\n    { city: 'Caldas Novas', state: 'GO', radiusKm: 3 },\n    { city: 'Rio Quente', state: 'GO', radiusKm: 3 },\n    { city: 'Pirenópolis', state: 'GO', radiusKm: 3 },\n    { city: 'Alto Paraíso de Goiás', state: 'GO', radiusKm: 3 },\n  ],\n  4: [ // Entorno do DF\n    { city: 'Luziânia', state: 'GO', radiusKm: 3 },\n    { city: 'Valparaíso de Goiás', state: 'GO', radiusKm: 3 },\n    { city: 'Águas Lindas de Goiás', state: 'GO', radiusKm: 3 },\n    { city: 'Formosa', state: 'GO', radiusKm: 3 },\n    { city: 'Novo Gama', state: 'GO', radiusKm: 3 },\n  ],\n  5: [ // Demais\n    { city: 'Goianésia', state: 'GO', radiusKm: 3 },\n    { city: 'Inhumas', state: 'GO', radiusKm: 3 },\n    { city: 'Mineiros', state: 'GO', radiusKm: 3 },\n    { city: 'Porangatu', state: 'GO', radiusKm: 3 },\n    { city: 'Quirinópolis', state: 'GO', radiusKm: 3 },\n  ],\n};\n\nconst cities = FASES[FASE];\nif (!cities) throw new Error(`Fase ${FASE} não existe`);\n\n// Um item por segmento — o HTTP abaixo processa um de cada vez (batching = 1).\nreturn ['locadoras-veiculos', 'revendas-veiculos'].map(segmentId => ({\n  json: {\n    segmentId,\n    fase: FASE,\n    cities: cities.map(({ city, state }) => ({ city, state })),\n    radiusKm: cities[0].radiusKm,\n    minReviews: 3,\n    newOnly: true,\n    dryRun: DRY_RUN,\n  },\n}));"
+      },
+      "id": "config",
+      "name": "Configuração",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://scraper:3099/api/v2/pipeline",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { cities: $json.cities, segmentId: $json.segmentId, minReviews: $json.minReviews, radiusKm: $json.radiusKm, newOnly: $json.newOnly, dryRun: $json.dryRun } }}",
+        "options": {
+          "timeout": 1800000,
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 2000
+            }
+          }
+        }
+      },
+      "id": "pipeline",
+      "name": "Pipeline por Segmento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resumo por segmento. Os leads ficam no Excel em ./exports — é ele que vai para\n// o Automação IA (colunas WHATSAPP NÚMERO e CHAVE EXTERNA no fim da aba principal).\nconst configs = $('Configuração').all();\n\nreturn $input.all().map((item, i) => {\n  const r = item.json;\n  const cfg = configs[i]?.json || {};\n  const leads = r.leads || [];\n  const conta = c => leads.filter(l => l.qualification?.classificacao === c).length;\n  const celular = leads.filter(l => l.whatsapp).length;\n\n  return {\n    json: {\n      segmento: cfg.segmentId,\n      fase: cfg.fase,\n      dryRun: r.dryRun,\n      total: leads.length,\n      quentes: conta('QUENTE'),\n      mornos: conta('MORNO'),\n      frios: conta('FRIO'),\n      comWhatsapp: celular,\n      qualificadosPorIA: leads.filter(l => l.qualification?.ai_analyzed).length,\n      funil: r.funil,\n      excel: r.excelPath,\n    },\n  };\n});"
+      },
+      "id": "summary",
+      "name": "Resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    }
+  ],
+  "connections": {
+    "Iniciar Prospecção": {
+      "main": [[{ "node": "Configuração", "type": "main", "index": 0 }]]
+    },
+    "Configuração": {
+      "main": [[{ "node": "Pipeline por Segmento", "type": "main", "index": 0 }]]
+    },
+    "Pipeline por Segmento": {
+      "main": [[{ "node": "Resumo", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

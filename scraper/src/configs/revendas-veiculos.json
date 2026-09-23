@@ -1,0 +1,156 @@
+{
+  "id": "revendas-veiculos",
+  "nome": "Revendas de Carros e Motos",
+  "produto": {
+    "nome": "WinClick",
+    "descricao": "site com vitrine do estoque (fotos, filtros, contato direto no WhatsApp) + atendente com IA no WhatsApp que responde disponibilidade, preco e financiamento",
+    "planos": [
+      { "nome": "Site", "preco": "sob consulta" },
+      { "nome": "Site + Atendente IA", "preco": "sob consulta" }
+    ],
+    "trial": "o site da Veloz Car (velozcar.com.br) como exemplo do que a gente entrega",
+    "precoStart": "sob consulta"
+  },
+
+  "_nota_googlePlaceType": "null DE PROPOSITO. Testado em Goiania em 23/09/2026: 'loja de carros seminovos' SEM tipo trouxe 20/20 car_dealer — o tipo nao acrescenta nada para carro. Para MOTO, includedType=car_dealer derrubou 20 resultados para 11. Nao existe tipo de moto na Places API (New).",
+
+  "busca": {
+    "queries": [
+      "loja de carros seminovos",
+      "revenda de veiculos",
+      "garagem de carros",
+      "multimarcas",
+      "compra e venda de veiculos",
+      "loja de motos",
+      "motos seminovas",
+      "revenda de motos"
+    ],
+    "_nota_nearbyKeywords": "SO 2 de proposito (carro + moto). O grid faz 1 busca por ponto e ALTERNA as keywords entre os pontos (nearbySearchGrid) — com 4 keywords cada uma cobriria 1 ponto em 4. A searchText e semantica: a keyword larga ja traz as variacoes (multimarcas, aluguel de carros).",
+    "nearbyKeywords": ["revenda de veiculos","loja de motos"],
+    "googlePlaceType": null,
+    "cnaes": ["4511102", "4512902", "4541204"],
+    "instagramHashtags": ["seminovos", "revendadeveiculos", "carrosseminovos", "motosseminovas", "multimarcas"],
+    "instagramBioKeywords": ["veicul", "seminov", "multimarca", "revenda", "carro", "moto", "financ", "estoque", "troca"],
+    "instagramHandlePrefixes": ["veiculos", "motos", "multimarcas", "auto"]
+  },
+
+  "analise": {
+    "_nota_painKeywords": "Negacao DENTRO do padrao — ver nota em locadoras-veiculos.json.",
+    "painKeywords": {
+      "demora_resposta": "\\b((n[aã]o|nunca|jamais)\\s+(me\\s+)?(respond|retorn|deu retorno|atend)|sem\\s+(resposta|retorno)|demor(ou|a|am|aram)\\s+(muito\\s+)?(pra|para)\\s+(respond|retorn)|visualiz(a|ou|am)\\s+e\\s+n[aã]o\\s+respond)",
+      "dificuldade_contato": "\\b((dif[ií]cil|complicado)\\s+(de\\s+)?(falar|contato|contatar)|(n[aã]o|ningu[eé]m)\\s+(consigo\\s+)?(falar|atende)|(n[aã]o)\\s+atendem\\s+o\\s+telefone)",
+      "anuncio_desatualizado": "\\b(j[aá]\\s+(tinha\\s+)?(sido\\s+)?vendid|an[uú]ncio\\s+(desatualizad|falso|enganos)|(n[aã]o)\\s+estava\\s+(mais\\s+)?(dispon[ií]vel|l[aá]|na\\s+loja)|foto\\s+(diferente|enganosa))",
+      "preco_divergente": "\\b(pre[çc]o\\s+diferente|valor\\s+diferente|(n[aã]o)\\s+(informam|passam|falam|mostram)\\s+(o\\s+)?(pre[çc]o|valor))"
+    },
+    "positiveKeywords": "\\b(respond(e|eu|em)\\s+(muito\\s+)?r[aá]pid|sempre\\s+dispon[ií]vel|atencios|pront[ao]\\s+atendimento|retorn(a|ou)\\s+r[aá]pid|transpar[eê]nt)",
+    "schedulingPainKeys": ["demora_resposta", "dificuldade_contato", "anuncio_desatualizado", "preco_divergente"],
+
+    "_nota_sinaisAgendamentoOnline": "Para revenda, 'ja resolve online' = catalogo de estoque no site (proprio ou de plataforma de revenda). A heuristica padrao dava falso positivo com 'agende seu test drive' + 'horario de funcionamento'.",
+    "sinaisAgendamentoOnline": "nosso\\s+estoque|ver\\s+(todo\\s+o\\s+)?estoque|/estoque[/\"'?]|/seminovos[/\"'?]|filtr(ar|e)\\s+por\\s+(marca|modelo)|autocerto|revendamais|boomsistemas|altimus|carrosnaweb|meucarronovo|shopcar",
+
+    "_nota_excluirNomes": "Concessionaria de montadora fica FORA (decisao de 23/09/2026): site e marketing vem da montadora. Nome de marca no nome do estabelecimento e o melhor proxy — revenda independente raramente usa marca registrada no nome. Tambem sai rede de seminovos das locadoras e plataformas.",
+    "excluirNomes": "\\b(concession[aá]ria|localiza\\s+seminovos|movida\\s+seminovos|unidas\\s+seminovos|kavak|webmotors|mobiauto)\\b|\\b(toyota|volkswagen|fiat|chevrolet|ford|hyundai|renault|nissan|jeep|honda|yamaha|peugeot|citro[eë]n|mitsubishi|kia|bmw|mercedes|audi|volvo|byd|caoa|chery|gwm|suzuki|kawasaki|triumph|harley)\\b",
+
+    "_nota_competitors": "Mesma lista de locadoras-veiculos/arquitetura: widget de chat/chatbot = ja resolveu atendimento.",
+    "competitors": {
+      "tawk": "tawk\\.to",
+      "jivochat": "jivosite|jivochat|jivo_api",
+      "zendesk": "zendesk|zopim",
+      "intercom": "intercom\\.io|widget\\.intercom",
+      "crisp": "crisp\\.chat",
+      "tidio": "tidio\\.co|tidiochat",
+      "freshchat": "freshchat|wchat\\.freshchat",
+      "livechat": "livechatinc|livechat\\.com",
+      "leadster": "leadster\\.com|cdn\\.leadster",
+      "rdstation": "rdstation|rd\\.services",
+      "blip": "blip\\.ai|builder\\.blip",
+      "take": "take\\.net",
+      "zenvia": "zenvia\\.com",
+      "huggy": "huggy\\.io|huggy\\.chat",
+      "octadesk": "octadesk\\.com|octadesk\\.services",
+      "chatvolt": "chatvolt\\.ai",
+      "manychat": "manychat\\.com|mctr\\.io",
+      "botmaker": "botmaker\\.com",
+      "weni": "weni\\.ai",
+      "umbler": "umbler\\.com/talk|umblertalk",
+      "chatwoot": "chatwoot\\.com|chatwoot\\.js",
+      "typebot": "typebot\\.io",
+      "poli": "poli\\.digital",
+      "digisac": "digisac\\.co|digisac\\.me",
+      "kommo": "kommo\\.com|amocrm",
+      "wati": "wati\\.io"
+    }
+  },
+
+  "qualificacao": {
+    "_nota_modeloOportunidade": "agendamento (o default) DE PROPOSITO — ver nota em locadoras-veiculos.json: quem nao tem site proprio e a maior oportunidade.",
+    "modeloOportunidade": "agendamento",
+    "sweetSpotAvaliacoes": [15, 300],
+
+    "_nota_fraseSaida": "Obrigatoria — ver nota em locadoras-veiculos.json.",
+    "fraseSaida": "Se não fizer sentido, é só falar que eu não escrevo de novo.",
+
+    "_nota_mensagemDoTemplate": "A IA ajusta score e gancho; o texto enviado e o template revisado. Teste de 23/09/2026: a IA inventou fato sobre o lead e omitiu o link do case.",
+    "mensagemDoTemplate": true,
+
+    "promptContexto": "Consultor B2B da WinClick, agencia digital de Goiania. Produto: site proprio para revenda de carros e motos (vitrine do estoque com fotos e filtros, contato direto no WhatsApp) e, como complemento, atendente com IA no WhatsApp que responde disponibilidade, preco e financiamento na hora. Case para citar SEMPRE: o site da Veloz Car, locadora de Palmas/TO — velozcar.com.br. Ela e LOCADORA, nao revenda: apresente como 'a mesma logica de vitrine, com o estoque de voces'. NAO diga que a Veloz Car usa atendente com IA. Prospect ideal: revenda independente de carros ou motos (nao concessionaria de montadora) que anuncia estoque no Instagram/OLX/Webmotors e nao tem site proprio. Mensagem assinada por Filipe, da WinClick, tom de conversa, sem jargao. NUNCA invente dado sobre o lead.",
+
+    "doresTemplates": {
+      "sem_site": "Sem site proprio — o estoque vive no Instagram e nos portais, com as regras e a concorrencia deles do lado",
+      "sem_agendamento": "Tem site mas sem vitrine de estoque — o cliente precisa perguntar tudo no WhatsApp",
+      "reclama_fila": "Avaliacoes reclamam de demora para responder, anuncio desatualizado ou preco diferente",
+      "alto_volume": "Volume alto de contato — 'ainda tem?' e 'quanto fica financiado?' repetidos o dia inteiro",
+      "muitos_dias": "Atende 6+ dias por semana — muita pergunta chegando fora do horario",
+      "usa_concorrente": "Usa {concorrentes} — ja investe em atendimento automatizado",
+      "marketing_abandonado": "Instagram parado — o estoque nao aparece para quem procura",
+      "desorganizacao": "Avaliacoes mencionam desorganizacao no atendimento ou na documentacao",
+      "default": ["Estoque espalhado entre Instagram e portais", "Cliente pergunta disponibilidade e preco antes de qualquer coisa"]
+    },
+
+    "mensagensTemplates": {
+      "fila": "Oi! Sou o Filipe, da WinClick, aqui de Goiânia. Achei a {nome} no Google e vi nas avaliações que às vezes a resposta demora — com estoque girando, é normal o WhatsApp acumular. A gente fez o site da Veloz Car (velozcar.com.br): vitrine com fotos e contato direto no WhatsApp. Pra revenda é a mesma lógica, com o estoque de vocês — o cliente chega sabendo o carro que quer. Faria sentido? Se não fizer sentido, é só falar que eu não escrevo de novo.",
+      "sem_site": "Oi! Sou o Filipe, da WinClick, aqui de Goiânia. Achei a {nome} no Google e vi que o estoque de vocês fica no Instagram e nos portais. A gente fez o site da Veloz Car (velozcar.com.br): vitrine com fotos e contato direto no WhatsApp. Pra revenda é a mesma lógica — um site próprio com o estoque de vocês, sem depender só de OLX e Webmotors. Faria sentido? Se não fizer sentido, é só falar que eu não escrevo de novo.",
+      "concorrente": "Oi! Sou o Filipe, da WinClick, aqui de Goiânia. Vi que a {nome} já usa uma ferramenta de atendimento no site. A gente trabalha com site de vitrine — fizemos o da Veloz Car: velozcar.com.br — e atendente com IA no WhatsApp que responde disponibilidade e preço pelo estoque real. Se quiser comparar, te mostro. Se não fizer sentido, é só falar que eu não escrevo de novo.",
+      "alto_volume": "Oi! Sou o Filipe, da WinClick, aqui de Goiânia. Achei a {nome} no Google — {avaliacoes} avaliações, então imagino quanto 'ainda tem?' chega por dia. A gente fez o site da Veloz Car (velozcar.com.br), vitrine com fotos e contato no WhatsApp. Pra revenda dá pra somar um atendente com IA que responde disponibilidade e preço na hora. Quer ver? Se não fizer sentido, é só falar que eu não escrevo de novo.",
+      "default": "Oi! Sou o Filipe, da WinClick, aqui de Goiânia. Achei a {nome} no Google e vi que o cliente ainda precisa perguntar tudo no WhatsApp pra saber o que vocês têm. A gente fez o site da Veloz Car (velozcar.com.br): vitrine com fotos e contato direto no WhatsApp. Pra revenda é a mesma lógica, com o estoque de vocês. Faria sentido? Se não fizer sentido, é só falar que eu não escrevo de novo.",
+      "instagram": "Oi! Filipe aqui, da WinClick (Goiânia). Vi o estoque da {nomeSimples} e queria te mostrar o site que fizemos pra Veloz Car: velozcar.com.br — vitrine com fotos e contato no WhatsApp. Pra revenda fica ótimo. Faria sentido pra vocês?",
+      "followup": "Oi! Só pra não deixar passar: um site como o da Veloz Car (velozcar.com.br), com o estoque de vocês, faz o cliente chegar no WhatsApp já sabendo o carro. Se quiser, te mostro como ficaria."
+    },
+
+    "argumentos": {
+      "fila": "A demora já aparece nas avaliações — com o estoque no site, o cliente vê antes de perguntar",
+      "sem_site": "Site próprio com o estoque, sem depender das regras e da concorrência dos portais",
+      "concorrente": "Vitrine + atendente com IA que responde pelo estoque real, não chatbot de menu",
+      "alto_volume": "Tira do WhatsApp o 'ainda tem?' e o 'quanto fica?' repetidos",
+      "default": "Vitrine do estoque com cliente chegando no WhatsApp já decidido"
+    },
+
+    "perfilLabels": {
+      "grande": "{segmentoSingular} grande e estabelecid{genero}",
+      "popular": "{segmentoSingular} reconhecid{genero} na regiao",
+      "crescimento": "{segmentoSingular} em crescimento",
+      "bairro": "{segmentoSingular} de porte pequeno",
+      "pequeno": "{segmentoSingular} pequen{genero}/nov{genero}"
+    },
+
+    "segmentoSingular": "Revenda",
+    "segmentoPlural": "revendas de carros e motos",
+    "genero": "a"
+  },
+
+  "respostas": {
+    "engaged": "Opa {nomeSimples}, que bom! A ideia é simples: um site com o estoque de vocês, fotos e contato direto no WhatsApp — a mesma lógica do velozcar.com.br. O cliente vê o carro antes de chamar e chega já decidido. Quer que eu te mostre como ficaria?",
+    "interested": "Show! Me manda, se puder, quantos veículos vocês têm em estoque hoje e se trabalham com carro, moto ou os dois. Com isso eu te mostro uma prévia.",
+    "interested_confirm": "Perfeito, {nomeSimples}! Vou montar e te chamo aqui. Qualquer dúvida, é só mandar.",
+    "objection_price": "Entendo. O valor depende do tamanho do estoque e se entra o atendente com IA no WhatsApp — por isso prefiro te mostrar primeiro. Posso te mandar uma prévia?",
+    "objection_doubt": "Funciona assim: a gente monta o site com o estoque de vocês (fotos, filtros, preço se quiserem mostrar) e o botão do WhatsApp em cada veículo. Se fizer sentido, dá pra colocar um atendente com IA que responde disponibilidade e financiamento na hora. Quer ver na prática?",
+    "objection_general": "Tranquilo! Se quiser, só dá uma olhada no da Veloz Car sem compromisso: velozcar.com.br. O que acha?",
+    "escalate": "Boa pergunta — essa eu prefiro te responder direito. Me dá um instante que eu te chamo.",
+    "opted_out": "Sem problema, {nomeSimples}! Não escrevo de novo. Se um dia fizer sentido, é só me chamar. Abraço!",
+    "human": "Beleza! Já te chamo aqui pra gente conversar direito.",
+    "fallback": "Desculpa, acho que não entendi. Resumindo: é um site com o estoque de vocês e contato direto no WhatsApp, como o velozcar.com.br. Quer ver como ficaria?",
+    "followup_1": "Oi {nomeSimples}! Deixo o convite de pé: te mostro como ficaria um site com o estoque de vocês, na linha do velozcar.com.br. Sem compromisso.",
+    "followup_2": "Oi {nomeSimples}! Uma coisa que ajuda muito revenda: o cliente ver o estoque atualizado antes de chamar — acaba o 'ainda tem?'. Se quiser ver no seu contexto, me fala.",
+    "followup_3": "Fala {nomeSimples}, última vez que escrevo! Se um dia fizer sentido, é só me chamar. Abraço e boas vendas!"
+  }
+}

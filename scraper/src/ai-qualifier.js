@@ -40,9 +40,15 @@ async function qualifyWithAI(lead, config = null) {
       await new Promise(r => setTimeout(r, 2500));
 
       // ── Groq (gpt-oss-120b — gratuito) ──
+      // gpt-oss é modelo de raciocínio: o raciocínio conta dentro de max_tokens. Com 400
+      // e esforço padrão, medido em 23/09/2026: 398 tokens de raciocínio, content vazio,
+      // finish_reason "length" — TODA qualificação caía no fallback de regras sem aviso.
+      // Esforço "low" gastou 11 tokens de raciocínio; o teto maior é folga, não custo.
       const { data } = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
-        max_tokens: 400,
+        max_tokens: 1500,
+        reasoning_effort: 'low',
+        response_format: { type: 'json_object' },
         temperature: 0.2,
         messages: [
           { role: 'system', content: systemMsg },
@@ -74,7 +80,23 @@ async function qualifyWithAI(lead, config = null) {
       text = data.content[0].text;
     }
 
-    return parseAIResponse(text, lead, config);
+    const resultado = parseAIResponse(text, lead, config);
+    if (!resultado.ai_analyzed) return resultado;
+
+    if (typeof resultado.score === 'number') {
+      resultado.classificacao = classificarPorScore(resultado.score);
+    }
+
+    // Com `mensagemDoTemplate`, a IA ajusta score e gancho, mas o texto que vai para a
+    // pessoa é o template revisado. Medido em 23/09/2026: a IA afirmou "vocês vendem
+    // carros e motos no Instagram" sem nenhum dado disso e omitiu o link do case.
+    if (config?.qualificacao?.mensagemDoTemplate) {
+      resultado.mensagem_whatsapp = preScore.mensagem_whatsapp;
+      resultado.mensagem_instagram = preScore.mensagem_instagram;
+      resultado.mensagem_followup = preScore.mensagem_followup;
+    }
+
+    return resultado;
   } catch (err) {
     const errMsg = err.response?.data?.error?.message || err.message;
     console.error(`[AI Qualifier] Erro (${useGroq ? 'Groq' : 'Claude'}):`, errMsg);
@@ -129,7 +151,12 @@ function buildPrompt(lead, config = null) {
   if (staffEstimate) flags.push(`EQUIPE:${staffEstimate}`);
   if (lead.abertura) flags.push(`DESDE:${lead.abertura}`);
 
-  return `${contexto}
+  const fraseSaida = config?.qualificacao?.fraseSaida;
+  const regraSaida = fraseSaida
+    ? `\nmensagem_whatsapp DEVE terminar exatamente com: "${fraseSaida}"`
+    : '';
+
+  return `${contexto}${regraSaida}
 ${lead.nome}|${lead.cidade || ''}|${lead.rating}/5(${lead.totalAvaliacoes}av)|${lead.website || 'sem-site'}
 ${flags.join(' ')}
 ${reviewContext}
@@ -142,12 +169,40 @@ function parseAIResponse(text, lead, config = null) {
     const parsed = JSON.parse(clean);
     return {
       ...parsed,
+      mensagem_whatsapp: garantirFraseSaida(parsed.mensagem_whatsapp, config),
       ai_analyzed: true,
     };
   } catch (err) {
     console.error('[AI Qualifier] Erro ao parsear resposta:', err.message);
     return qualifyWithRulesV2(lead, config);
   }
+}
+
+/**
+ * Uma régua só para regras e IA. A IA devolvia a própria classificação e ela não
+ * batia com o score que ela mesma deu (medido: score 68 rotulado MORNO, quando a
+ * régua do sistema diz QUENTE) — e QUENTE é o que entra primeiro na fila.
+ */
+function classificarPorScore(score) {
+  if (score >= 58) return 'QUENTE';
+  if (score >= 38) return 'MORNO';
+  return 'FRIO';
+}
+
+/**
+ * Primeira abordagem sem saída explícita não é enviada pelo Automação IA: o
+ * `podeEnviar` de lá recusa e devolve o lead para NOVO, onde ele fica parado sem
+ * aviso. A instrução no prompt não basta — o modelo às vezes ignora — então a
+ * frase é garantida aqui. Só age se o segmento definir `qualificacao.fraseSaida`.
+ */
+function garantirFraseSaida(mensagem, config = null) {
+  const frase = config?.qualificacao?.fraseSaida;
+  if (!frase || !mensagem) return mensagem;
+
+  const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  if (semAcento(mensagem).includes(semAcento(frase))) return mensagem;
+
+  return `${mensagem.trim()} ${frase}`;
 }
 
 // ════════════════════════════════════════════════════
@@ -393,11 +448,7 @@ function finalizarQualificacao(lead, scores, reviewAnalysis, marketingStatus, co
 
   const finalScore = clamp(rawScore, 0, 100);
 
-  // Classificação
-  let classificacao;
-  if (finalScore >= 58) classificacao = 'QUENTE';
-  else if (finalScore >= 38) classificacao = 'MORNO';
-  else classificacao = 'FRIO';
+  const classificacao = classificarPorScore(finalScore);
 
   // Tags
   const tags = buildTags(lead, scores, reviewAnalysis, marketingStatus);
@@ -876,11 +927,23 @@ function getSizeLabel(lead) {
   return 'pequeno';
 }
 
+/**
+ * A dor de review entra em `dores` como o TEXTO de `doresTemplates.reclama_fila`.
+ * Antes o teste era `d.includes('fila')` — só funcionava enquanto o texto do
+ * segmento tivesse a palavra "fila" (barbearia). Em advocacia, arquitetura e
+ * veículos o template de dor de review nunca era escolhido.
+ */
+function temDorDeReview(dores, config = null) {
+  const textoDor = config?.qualificacao?.doresTemplates?.reclama_fila;
+  if (textoDor) return dores.includes(textoDor);
+  return dores.some(d => d.includes('fila') || d.includes('espera'));
+}
+
 function buildArgumento(lead, dores, config = null) {
   const args = config ? config.qualificacao.argumentos : null;
   const produtoNome = config ? config.produto.nome : 'Bookou';
 
-  if (dores.some(d => d.includes('fila') || d.includes('espera'))) {
+  if (temDorDeReview(dores, config)) {
     return args ? args.fila : 'Agendamento online elimina filas — seus clientes agendam pelo celular';
   }
   if (!lead.website) {
@@ -917,7 +980,7 @@ function buildMensagens(lead, dores, classificacao, config = null) {
 
   let mensagem_whatsapp;
   if (templates) {
-    if (dores.some(d => d.includes('fila'))) {
+    if (temDorDeReview(dores, config)) {
       mensagem_whatsapp = interpolate(templates.fila, vars);
     } else if (!lead.website) {
       mensagem_whatsapp = interpolate(templates.sem_site, vars);
@@ -944,6 +1007,8 @@ function buildMensagens(lead, dores, classificacao, config = null) {
       mensagem_whatsapp = `Oi, tudo bem? Conheci a ${nomeSimples} pelo Google e curti o trabalho de vocês. Eu trabalho com um sistema de agendamento e gestão pra barbearias, bem simples de usar. Se tiver interesse em conhecer, posso te mostrar em poucos minutos. Sem compromisso nenhum!`;
     }
   }
+
+  mensagem_whatsapp = garantirFraseSaida(mensagem_whatsapp, config);
 
   const mensagem_instagram = templates
     ? interpolate(templates.instagram, vars)
@@ -994,13 +1059,15 @@ function estimateStaff(lead) {
 
   if (!velocity && !diasAbertos) return null;
 
-  // Heurística: ~1 review por 15-20 clientes, barbearia faz ~5-8 clientes/barbeiro/dia
-  if (velocity > 5 && diasAbertos >= 6) return '3-5 barbeiros (alta demanda)';
-  if (velocity > 2 && diasAbertos >= 5) return '2-3 barbeiros';
-  if (velocity > 1) return '1-2 barbeiros';
-  if (diasAbertos >= 6) return '2-3 barbeiros (aberto 6 dias)';
+  // Heurística calibrada em barbearia (~1 review por 15-20 clientes). O rótulo é
+  // neutro porque vai no prompt da IA de todos os segmentos — "barbeiros" vazava
+  // para a mensagem de advocacia e de locadora.
+  if (velocity > 5 && diasAbertos >= 6) return '3-5 pessoas (alta demanda)';
+  if (velocity > 2 && diasAbertos >= 5) return '2-3 pessoas';
+  if (velocity > 1) return '1-2 pessoas';
+  if (diasAbertos >= 6) return '2-3 pessoas (aberto 6 dias)';
 
-  return '1-2 barbeiros';
+  return '1-2 pessoas';
 }
 
 function suggestContactTime(horarios) {

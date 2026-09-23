@@ -117,7 +117,12 @@ async function analyzeWebsite(url, config = null) {
     const metaTags = extractMetaTags(html);
 
     // 7. Funcionalidades
-    const temAgendamentoOnline = htmlLower.includes('agend') && (htmlLower.includes('horário') || htmlLower.includes('disponív'));
+    // A heurística padrão dá falso positivo fora de agenda: revenda com "agende seu
+    // test drive" + "horário de funcionamento" virava "tem agendamento online".
+    const sinaisConfig = config?.analise?.sinaisAgendamentoOnline;
+    const temAgendamentoOnline = sinaisConfig
+      ? sinaisConfig.test(html)
+      : htmlLower.includes('agend') && (htmlLower.includes('horário') || htmlLower.includes('disponív'));
     const temPrecos = htmlLower.includes('preço') || htmlLower.includes('preco') || /R\$\s?\d+/i.test(html);
     const temFormulario = /<form/i.test(html);
     const temChat = /tawk\.to|tidio|zendesk|intercom|crisp|jivochat/i.test(html);

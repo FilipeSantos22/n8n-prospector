@@ -45,6 +45,14 @@ function loadConfig(id) {
     ? new RegExp(raw.analise.excluirNomes, 'i')
     : null;
 
+  // analise.sinaisAgendamentoOnline (OPCIONAL): string -> RegExp
+  // O que conta como "já resolve online" muda por nicho: para barbearia é agenda,
+  // para locadora é reserva, para revenda é catálogo de estoque. Ausente = heurística
+  // padrão do website-analyzer ("agend" + "horário"/"disponív").
+  compiled.analise.sinaisAgendamentoOnline = raw.analise.sinaisAgendamentoOnline
+    ? new RegExp(raw.analise.sinaisAgendamentoOnline, 'i')
+    : null;
+
   configCache.set(id, compiled);
   return compiled;
 }
