@@ -252,6 +252,16 @@ app.post('/api/v2/discover', async (req, res) => {
         continue;
       }
 
+      // Cada ponto custa até 2 chamadas pagas. Caso real (23/09/2026): "Goiânia" chegou
+      // com encoding quebrado ("Goi�nia"), não achou os bounds cadastrados, o geocoding
+      // devolveu um viewport do tamanho de um estado e o grid saiu com 30.800 pontos.
+      // Nenhuma cidade legítima passa perto do teto (São Paulo com raio 2 km = 208).
+      const maxPontos = parseInt(process.env.GRID_MAX_PONTOS_POR_CIDADE || '250', 10);
+      if (grid.points.length > maxPontos) {
+        console.error(`[Discovery] 🛑 Grid de ${grid.points.length} pontos para "${city}/${state}" passa do teto de ${maxPontos} (GRID_MAX_PONTOS_POR_CIDADE). Cidade ignorada — confira o nome (acentuação/encoding) e o raio.`);
+        continue;
+      }
+
       // Busca combinada: Nearby (grid) + Text Search
       const results = await combinedSearch(city, state, grid.points, grid.radiusMeters, googleKey, config);
 
