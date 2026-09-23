@@ -64,6 +64,10 @@ app.use((req, res, next) => {
 
 const PORT = process.env.PORT || 3099;
 const EXPORTS_DIR = process.env.EXPORTS_DIR || '/home/node/exports';
+
+// Limite de cada etapa chamada pelo pipeline. Era 10 min: 5 cidades com Instagram e CNAE lentos
+// passaram disso no discovery, e a qualificação com Groq (2,5 s por lead) passa com 240 leads.
+const ETAPA_TIMEOUT_MS = parseInt(process.env.PIPELINE_ETAPA_TIMEOUT_MS || String(4 * 60 * 60 * 1000), 10);
 const LEADS_FILE = path.join(EXPORTS_DIR, 'leads-data.json');
 const ENRICH_CONCURRENCY = parseInt(process.env.ENRICH_CONCURRENCY || '3');
 const API_KEY = process.env.SCRAPER_API_KEY || '';
@@ -309,6 +313,15 @@ app.post('/api/v2/discover', async (req, res) => {
         console.log(`[Discovery] Incremental: ${skippedKnown} leads já conhecidos removidos, ${finalLeads.length} novos`);
       }
     }
+
+    // Discovery é a etapa que gasta a cota paga do Google. Salva ANTES de responder: se quem
+    // chamou já desistiu (timeout), o resultado não se perde e o pipeline retoma daqui com
+    // `retomarDiscovery: true`. Caso real: 76 buscas descartadas porque a resposta não tinha
+    // mais para onde ir.
+    getStorage().saveTempData(`discovery-${config.id}`, {
+      total: finalLeads.length, leads: finalLeads, skippedKnown,
+      cities: cities.map(c => `${c.city}/${c.state}`), salvoEm: new Date().toISOString(),
+    }, tenantId);
 
     res.json({ total: finalLeads.length, leads: finalLeads, skippedKnown });
   } catch (err) {
@@ -649,9 +662,19 @@ app.post('/api/v2/pipeline', async (req, res) => {
 
     const citiesWithRadius = cities.map(c => ({ ...c, radiusKm }));
 
-    // FASE 1: DISCOVERY
-    console.log('\n🔍 FASE 1: Discovery (grid geográfico)...');
-    const discoverRes = await axios.post(`http://localhost:${PORT}/api/v2/discover`, { cities: citiesWithRadius, segmentId: config.id, newOnly, tenantId }, { timeout: 600000 });
+    // FASE 1: DISCOVERY (ou retomada do último discovery salvo deste segmento — sem Google)
+    let discoverRes;
+    if (req.body.retomarDiscovery) {
+      const salvo = storage.getTempData(`discovery-${config.id}`, tenantId);
+      if (!salvo?.leads) {
+        return res.status(404).json({ error: `Nenhum discovery salvo para "${config.id}".` });
+      }
+      console.log(`\n🔁 FASE 1: retomando discovery salvo em ${salvo.salvoEm} (${salvo.total} leads, ${salvo.cities?.join(', ')})`);
+      discoverRes = { data: salvo };
+    } else {
+      console.log('\n🔍 FASE 1: Discovery (grid geográfico)...');
+      discoverRes = await axios.post(`http://localhost:${PORT}/api/v2/discover`, { cities: citiesWithRadius, segmentId: config.id, newOnly, tenantId }, { timeout: ETAPA_TIMEOUT_MS });
+    }
     console.log(`✅ ${discoverRes.data.total} leads encontrados${discoverRes.data.skippedKnown ? ` (${discoverRes.data.skippedKnown} já conhecidos)` : ''}`);
 
     // FASE 2: PRE-FILTER
@@ -659,22 +682,22 @@ app.post('/api/v2/pipeline', async (req, res) => {
     const filterRes = await axios.post(`http://localhost:${PORT}/api/v2/prefilter`, {
       leads: discoverRes.data.leads, minReviews, minRating, maxReviews,
       segmentId: config.id, tenantId,
-    }, { timeout: 60000 });
+    }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${filterRes.data.total} leads após filtro (removidos: ${filterRes.data.removed})`);
 
     // FASE 3: ENRICHMENT
     console.log('\n📊 FASE 3: Enrichment...');
-    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filterRes.data.leads, segmentId: config.id, tenantId }, { timeout: 600000 });
+    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filterRes.data.leads, segmentId: config.id, tenantId }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${enrichRes.data.total} leads enriquecidos`);
 
     // FASE 4: DEEP ANALYSIS
     console.log('\n🧠 FASE 4: Deep Analysis...');
-    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads, segmentId: config.id }, { timeout: 60000 });
+    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${analyzeRes.data.total} leads analisados`);
 
     // FASE 5: QUALIFY
     console.log('\n🎯 FASE 5: Qualify...');
-    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
+    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
 
     // ═══ FUNIL CONSOLIDADO ═══
@@ -787,17 +810,17 @@ app.post('/api/v2/pipeline-from-file', async (req, res) => {
 
     // ENRICHMENT
     console.log('\n📊 FASE 3: Enrichment...');
-    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filtered, segmentId: config.id }, { timeout: 600000 });
+    const enrichRes = await axios.post(`http://localhost:${PORT}/api/v2/enrich`, { leads: filtered, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${enrichRes.data.total} leads enriquecidos`);
 
     // DEEP ANALYSIS
     console.log('\n🧠 FASE 4: Deep Analysis...');
-    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads, segmentId: config.id }, { timeout: 60000 });
+    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichRes.data.leads, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${analyzeRes.data.total} leads analisados`);
 
     // QUALIFY
     console.log('\n🎯 FASE 5: Qualify...');
-    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
+    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
 
     // EXPORT
@@ -850,12 +873,12 @@ app.post('/api/v2/pipeline-from-enriched', async (req, res) => {
 
     // ANALYZE
     console.log('\n🧠 FASE 4: Deep Analysis...');
-    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichData.leads, segmentId: config.id }, { timeout: 60000 });
+    const analyzeRes = await axios.post(`http://localhost:${PORT}/api/v2/analyze`, { leads: enrichData.leads, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${analyzeRes.data.total} leads analisados`);
 
     // QUALIFY
     console.log('\n🎯 FASE 5: Qualify...');
-    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: 600000 });
+    const qualifyRes = await axios.post(`http://localhost:${PORT}/api/v2/qualify`, { leads: analyzeRes.data.leads, segmentId: config.id }, { timeout: ETAPA_TIMEOUT_MS });
     console.log(`✅ ${qualifyRes.data.total} leads qualificados`);
 
     // EXPORT + SAVE
@@ -913,7 +936,7 @@ app.post('/api/search', async (req, res) => {
 app.post('/api/pipeline', async (req, res) => {
   console.log('[Pipeline v1] Redirecionando para v2...');
   try {
-    const response = await axios.post(`http://localhost:${PORT}/api/v2/pipeline`, req.body, { timeout: 600000 });
+    const response = await axios.post(`http://localhost:${PORT}/api/v2/pipeline`, req.body, { timeout: ETAPA_TIMEOUT_MS });
     res.json(response.data);
   } catch (err) {
     res.status(500).json({ error: err.message });
