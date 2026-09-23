@@ -224,6 +224,17 @@ existir como **tenant no Automação IA**, com:
 - [x] `workflow-veiculos-goias.json` — fases da seção 4, um segmento por vez, sem envio
 - [ ] 1ª rodada real (Fase 1) e conferência do consumo no console
 
+### Travas contra gasto à toa (1ª rodada, 23/09/2026)
+
+| O que aconteceu | Trava |
+|---|---|
+| Corpo da requisição com encoding quebrado ("Goi�nia") → sem bounds → geocoding devolveu área de um estado → grid de **30.800 pontos**. Parado em 38 buscas | `GRID_MAX_PONTOS_POR_CIDADE` (default 250): cidade com grid anormal é pulada |
+| Pipeline desistia do discovery aos 10 min e as **76 buscas** já feitas se perdiam | discovery salvo em `exports/<tenant>/temp/discovery-<segmento>.json`; `retomarDiscovery: true` segue dali sem Google; etapas com `PIPELINE_ETAPA_TIMEOUT_MS` (4 h) |
+| Sem cap no console | `GOOGLE_LIMITE_MENSAL_*` (seção 5) |
+
+Ao chamar o scraper fora do n8n no Windows, mande o corpo de um **arquivo UTF-8**
+(`curl --data-binary @body.json`), não como argumento do shell.
+
 ### Como rodar
 
 ```bash

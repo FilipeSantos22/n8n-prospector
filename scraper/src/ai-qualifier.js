@@ -36,15 +36,18 @@ async function qualifyWithAI(lead, config = null) {
     let text;
 
     if (useGroq) {
-      // Rate limit: 30 req/min na Groq free tier — esperar 2.5s entre chamadas
-      await new Promise(r => setTimeout(r, 2500));
+      // O limite que pega na Groq gratuita é o de TOKENS por minuto (8.000), não o de
+      // requisições: cada qualificação usa ~1.100 tokens, então cabem ~7 por minuto. Com a
+      // espera antiga de 2,5 s, medido em 23/09/2026, a maioria das chamadas levava 429 e caía
+      // nas regras. 8 s mantém abaixo do teto; ajuste GROQ_INTERVALO_MS num plano pago.
+      await new Promise(r => setTimeout(r, parseInt(process.env.GROQ_INTERVALO_MS || '8000', 10)));
 
       // ── Groq (gpt-oss-120b — gratuito) ──
       // gpt-oss é modelo de raciocínio: o raciocínio conta dentro de max_tokens. Com 400
       // e esforço padrão, medido em 23/09/2026: 398 tokens de raciocínio, content vazio,
       // finish_reason "length" — TODA qualificação caía no fallback de regras sem aviso.
       // Esforço "low" gastou 11 tokens de raciocínio; o teto maior é folga, não custo.
-      const { data } = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
+      const chamar = () => axios.post('https://api.groq.com/openai/v1/chat/completions', {
         model: process.env.GROQ_MODEL || 'openai/gpt-oss-120b',
         max_tokens: 1500,
         reasoning_effort: 'low',
@@ -61,7 +64,19 @@ async function qualifyWithAI(lead, config = null) {
         },
         timeout: 30000,
       });
-      text = data.choices[0].message.content;
+
+      let resposta;
+      try {
+        resposta = await chamar();
+      } catch (err) {
+        // 429 diz quanto esperar ("try again in 1.29s"). Uma nova tentativa só — se falhar de
+        // novo, as regras assumem, como antes.
+        if (err.response?.status !== 429) throw err;
+        const seg = parseFloat((err.response?.data?.error?.message || '').match(/try again in ([\d.]+)s/)?.[1] || '5');
+        await new Promise(r => setTimeout(r, Math.ceil(seg * 1000) + 500));
+        resposta = await chamar();
+      }
+      text = resposta.data.choices[0].message.content;
     } else {
       // ── Claude (Anthropic) ──
       const { data } = await axios.post('https://api.anthropic.com/v1/messages', {
