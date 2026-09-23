@@ -193,9 +193,11 @@ app.get('/health', (req, res) => {
       foursquare: !!process.env.FOURSQUARE_API_KEY,
       google_search: !!process.env.GOOGLE_SEARCH_API_KEY,
       anthropic: !!process.env.ANTHROPIC_API_KEY,
+      groq: !!process.env.GROQ_API_KEY,
     },
     cache: cache.stats(),
     seen: seenRegistry.stats(),
+    googleUsoMensal: require('./utils/google-budget').relatorio(),
     enrichConcurrency: ENRICH_CONCURRENCY,
   });
 });
